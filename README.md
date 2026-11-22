@@ -52,6 +52,14 @@ Em **Backup**, salve um arquivo completo com os dados ou exporte os vistos de um
 
 Esta versão ainda não faz envio automático para Google Drive, OneDrive ou iCloud Drive. Faça backups regularmente e mantenha uma cópia em local seguro.
 
+## Sobre o uso de inteligência artificial
+
+O VistaAí! nasceu da necessidade de um professor do Ensino Básico que queria computar os vistos das atividades dos alunos de um jeito rápido e simples. O idealizador não sabe programação; por isso, usou ferramentas de inteligência artificial como apoio para planejar e desenvolver o aplicativo e preparar sua documentação.
+
+As logos do VistaAí! também foram feitas com ajuda de inteligência artificial.
+
+O propósito do projeto é facilitar a rotina de professores. A proposta é que o programa seja gratuito e de código aberto, com foco em registrar e organizar as atividades dos alunos, sem complicar o trabalho docente.
+
 ## Sobre o projeto
 
 O foco do VistaAí! é facilitar a vida de professores com uma ferramenta simples, gratuita e de código aberto. O projeto é licenciado sob **MIT**; consulte o arquivo LICENSE.
