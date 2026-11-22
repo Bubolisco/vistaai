@@ -48,7 +48,7 @@ O aplicativo prepara os arquivos para uso offline depois da primeira abertura co
 
 Os registros ficam no armazenamento local do navegador em cada dispositivo. O app não cria contas e não sincroniza os dados automaticamente entre aparelhos. Compartilhar o link permite que outra pessoa use o aplicativo, mas não compartilha suas turmas, alunos ou vistos.
 
-Em **Backup**, salve um arquivo completo com os dados ou exporte os vistos de um dia. Para levar os registros diários ao computador, importe o arquivo diário na cópia do VistaAí! aberta no computador. A exportação completa e a exportação diária incluem dados de alunos; guarde esses arquivos com cuidado e não os envie para este repositório.
+Em **Backup**, salve um arquivo completo com os dados ou exporte os vistos de um dia. Para levar os registros diários ao computador, importe o arquivo diário na cópia do VistaAí! aberta no computador. A exportação completa e a exportação diária incluem dados de alunos; guarde esses arquivos com cuidado.
 
 Esta versão ainda não faz envio automático para Google Drive, OneDrive ou iCloud Drive. Faça backups regularmente e mantenha uma cópia em local seguro.
 
