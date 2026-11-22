@@ -23,11 +23,13 @@ O projeto nasceu da necessidade de um professor do Ensino Básico que queria com
 - Calcula resultados por soma dos pontos, média dos vistos ou conversão para uma nota máxima configurável.
 - Exporta os dados da turma para Excel.
 - Faz backup completo e exportação diária para transferir vistos entre dispositivos.
+- Inclui uma aba **Como Usar** com instruções passo a passo.
+- Permite apagar todos os dados deste navegador ao fim do ano letivo, com confirmação reforçada.
 
 ## Como começar
 
 1. Abra o [VistaAí! no navegador](https://bubolisco.github.io/vistaai/).
-2. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos ou importe uma planilha com a coluna **Nome**; **Matrícula** é opcional.
+2. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos ou importe uma planilha com a coluna `Nome`; `Matrícula` é opcional.
 3. Em **QR Codes**, selecione a turma, imprima as etiquetas e cole cada código no livro do aluno correspondente.
 4. Em **Dar visto**, selecione a turma, informe a atividade ou página, leia o QR Code com a câmera e marque **Feito**, **Incompleto** ou **Não feito**.
 5. Em **Histórico**, consulte os registros e resultados. Escolha o cálculo desejado e exporte a turma para Excel quando precisar.
@@ -46,22 +48,16 @@ O aplicativo prepara os arquivos para uso offline depois da primeira abertura co
 
 ## Dados e backups
 
-Os registros ficam no armazenamento local do navegador em cada dispositivo. O app não cria contas e não sincroniza os dados automaticamente entre aparelhos. Compartilhar o link permite que outra pessoa use o aplicativo, mas não compartilha suas turmas, alunos ou vistos.
+Os registros ficam no armazenamento local do navegador em cada dispositivo. Se o banco principal não puder ser aberto, o app tenta usar um armazenamento local alternativo e mostra um aviso. Navegação privada e a limpeza dos dados do site podem apagar registros. O app não cria contas e não sincroniza os dados automaticamente entre aparelhos. Compartilhar o link permite que outra pessoa use o aplicativo, mas não compartilha suas turmas, alunos ou vistos.
 
-Em **Backup**, salve um arquivo completo com os dados ou exporte os vistos de um dia. Para levar os registros diários ao computador, importe o arquivo diário na cópia do VistaAí! aberta no computador. A exportação completa e a exportação diária incluem dados de alunos; guarde esses arquivos com cuidado.
+Em **Backup**, salve um arquivo completo com os dados ou exporte os vistos de um dia. Para levar os registros diários ao computador, importe o arquivo diário na cópia do VistaAí! aberta no computador. A exportação completa e a exportação diária incluem dados de alunos; guarde esses arquivos com cuidado e não os envie para este repositório.
+
+Ao iniciar um novo ano letivo, faça um backup completo se quiser arquivar os dados e use **Apagar todos os dados deste navegador** na seção **Backup**. O app pede confirmação reforçada antes de apagar disciplinas, turmas, alunos, cálculos e vistos deste aparelho.
 
 Esta versão ainda não faz envio automático para Google Drive, OneDrive ou iCloud Drive. Faça backups regularmente e mantenha uma cópia em local seguro.
 
-## Sobre o uso de inteligência artificial
-
-O VistaAí! nasceu da necessidade de um professor do Ensino Básico que queria computar os vistos das atividades dos alunos de um jeito rápido e simples. O idealizador não sabe programação; por isso, usou ferramentas de inteligência artificial como apoio para planejar e desenvolver o aplicativo e preparar sua documentação.
-
-As logos do VistaAí! também foram feitas com ajuda de inteligência artificial.
-
-O propósito do projeto é facilitar a rotina de professores. A proposta é que o programa seja gratuito e de código aberto, com foco em registrar e organizar as atividades dos alunos, sem complicar o trabalho docente.
-
 ## Sobre o projeto
 
-O foco do VistaAí! é facilitar a vida de professores com uma ferramenta simples, gratuita e de código aberto. O projeto é licenciado sob **MIT**; consulte o arquivo LICENSE.
+O foco do VistaAí! é facilitar a vida de professores com uma ferramenta simples, gratuita e de código aberto. O projeto é licenciado sob **MIT**; consulte o arquivo `LICENSE`.
 
-Contribuições são bem-vindas. Sugestões de professores, relatos de problemas, ideias de acessibilidade e melhorias no código podem ajudar o aplicativo a evoluir. Não é preciso programar para compartilhar uma sugestão. Você pode abrir uma discussão ou relatar um problema na página de issues do projeto: https://github.com/Bubolisco/vistaai/issues.
+Contribuições são bem-vindas. Sugestões de professores, relatos de problemas, ideias de acessibilidade e melhorias no código podem ajudar o aplicativo a evoluir. Não é preciso programar para compartilhar uma sugestão. Você pode abrir uma [discussão ou relatar um problema](https://github.com/Bubolisco/vistaai/issues).

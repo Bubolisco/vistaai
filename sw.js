@@ -1,4 +1,4 @@
-const CACHE='vistai-shell-v5';
+const CACHE='vistai-shell-v6';
 const SHELL=['./','./index.html','./manifest.webmanifest','./assets/logo-vistaai-1.webp','./assets/logo-vistaai-2.webp'];
 const LIBS=[
   'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js',
