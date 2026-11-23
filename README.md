@@ -4,7 +4,7 @@
   <p><strong>Ferramentas gratuitas para organizar a rotina de professores.</strong></p>
 </div>
 
-> **Versão 1.5 em desenvolvimento e testes.** Até hoje, o aplicativo foi utilizado somente pelo idealizador. Ainda não foi testado por outros professores nem validado para uso em larga escala.
+> **Versão 1.6 em desenvolvimento e testes.** Até hoje, o aplicativo foi utilizado somente pelo idealizador. Ainda não foi testado por outros professores nem validado para uso em larga escala. Esta atualização também corrige a inserção de identificadores dinâmicos nas telas.
 
 <p align="center"><a href="https://vistaaiedu.com.br/">Abrir Vista Aí e Anota Aí</a></p>
 
