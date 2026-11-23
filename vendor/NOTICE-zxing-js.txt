@@ -1,0 +1,5 @@
+Third-party notice: ZXing-JS
+
+The html5-qrcode 2.3.8 browser bundle includes QR-decoding code from ZXing-JS, copyright the ZXing authors, under the Apache License, Version 2.0.
+
+The full Apache License 2.0 text is included in LICENSE-html5-qrcode.txt. ZXing-JS source: https://github.com/zxing-js/library
