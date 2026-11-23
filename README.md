@@ -16,7 +16,8 @@ O projeto nasceu da necessidade de um professor do Ensino Básico que queria com
 ## O que o aplicativo faz
 
 - Organiza disciplinas, turmas e alunos separadamente.
-- Permite cadastrar alunos manualmente ou importar uma planilha Excel ou CSV.
+- Permite cadastrar alunos manualmente ou importar uma planilha Excel ou CSV, inclusive com várias turmas.
+- Baixa um modelo de Excel com colunas para nome, turma e matrícula opcional.
 - Gera QR Codes individuais para imprimir e colar nos livros dos alunos.
 - Registra a atividade, a situação e a data e hora de cada visto.
 - Mostra o histórico por aluno e por turma.
@@ -29,7 +30,7 @@ O projeto nasceu da necessidade de um professor do Ensino Básico que queria com
 ## Como começar
 
 1. Abra o [VistaAí! no navegador](https://bubolisco.github.io/vistaai/).
-2. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos ou importe uma planilha com a coluna `Nome`; `Matrícula` é opcional.
+2. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos manualmente ou toque em **Baixar Modelo** para obter a planilha Excel. Preencha `Nome` e `Turma`; `Matrícula` é opcional. O nome da turma na planilha deve corresponder ao cadastro no app.
 3. Em **QR Codes**, selecione a turma, imprima as etiquetas e cole cada código no livro do aluno correspondente.
 4. Em **Dar visto**, selecione a turma, informe a atividade ou página, leia o QR Code com a câmera e marque **Feito**, **Incompleto** ou **Não feito**.
 5. Em **Histórico**, consulte os registros e resultados. Escolha o cálculo desejado e exporte a turma para Excel quando precisar.

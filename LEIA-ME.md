@@ -4,7 +4,7 @@ O VistaAí! ajuda professores a registrar os vistos das atividades dos alunos. E
 
 ## Como utilizar
 
-1. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos manualmente ou importe uma planilha Excel/CSV com uma coluna chamada `Nome`. A coluna `Matrícula` é opcional.
+1. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos manualmente ou toque em **Baixar Modelo** para baixar uma planilha Excel. Preencha `Nome` e `Turma`; `Matrícula` é opcional. O nome da turma precisa corresponder ao cadastro no aplicativo. Se a coluna Turma ficar vazia, selecione uma turma padrão antes de importar.
 2. Em **QR Codes**, escolha a turma e imprima as etiquetas. Cada aluno tem um código próprio; cole a etiqueta no livro correspondente.
 3. Toque no botão destacado **Dar visto**, escolha a turma e informe a atividade ou página. Leia o QR Code do aluno com a câmera e marque **Feito**, **Incompleto** ou **Não feito**.
 4. Em **Histórico**, consulte os registros e resultados, escolha o cálculo da nota e exporte os dados da turma para Excel.
