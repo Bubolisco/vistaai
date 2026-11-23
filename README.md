@@ -4,7 +4,7 @@
 </div>
 
 <p align="center">
-  <a href="https://bubolisco.github.io/vistaai/">Abrir o VistaAí!</a>
+  <a href="https://www.vistaaiedu.com.br/">Abrir o VistaAí!</a>
 </p>
 
 ## O que é o VistaAí!
@@ -25,11 +25,12 @@ O projeto nasceu da necessidade de um professor do Ensino Básico que queria com
 - Exporta os dados da turma para Excel.
 - Faz backup completo e exportação diária para transferir vistos entre dispositivos.
 - Inclui uma aba **Como Usar** com instruções passo a passo.
+- Inclui uma aba **Doações** para quem quiser apoiar voluntariamente o projeto.
 - Permite apagar todos os dados deste navegador ao fim do ano letivo, com confirmação reforçada.
 
 ## Como começar
 
-1. Abra o [VistaAí! no navegador](https://bubolisco.github.io/vistaai/).
+1. Abra o [VistaAí! no navegador](https://www.vistaaiedu.com.br/).
 2. Em **Turmas e alunos**, crie uma disciplina e uma turma. Cadastre os alunos manualmente ou toque em **Baixar Modelo** para obter a planilha Excel. Preencha `Nome` e `Turma`; `Matrícula` é opcional. O nome da turma na planilha deve corresponder ao cadastro no app.
 3. Em **QR Codes**, selecione a turma, imprima as etiquetas e cole cada código no livro do aluno correspondente.
 4. Em **Dar visto**, selecione a turma, informe a atividade ou página, leia o QR Code com a câmera e marque **Feito**, **Incompleto** ou **Não feito**.
@@ -62,3 +63,7 @@ Esta versão ainda não faz envio automático para Google Drive, OneDrive ou iCl
 O foco do VistaAí! é facilitar a vida de professores com uma ferramenta simples, gratuita e de código aberto. O projeto é licenciado sob **MIT**; consulte o arquivo `LICENSE`.
 
 Contribuições são bem-vindas. Sugestões de professores, relatos de problemas, ideias de acessibilidade e melhorias no código podem ajudar o aplicativo a evoluir. Não é preciso programar para compartilhar uma sugestão. Você pode abrir uma [discussão ou relatar um problema](https://github.com/Bubolisco/vistaai/issues).
+
+## Apoie o projeto
+
+O VistaAí! continuará gratuito. Quem desejar pode contribuir voluntariamente para ajudar com a renovação do domínio, a manutenção e as próximas melhorias. A contribuição não é necessária para usar o aplicativo nem desbloqueia funções. Veja as opções de [Pix e Mercado Pago](APOIE.md).
