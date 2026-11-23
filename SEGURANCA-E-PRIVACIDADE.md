@@ -1,37 +1,36 @@
-# Segurança e privacidade no Vista Aí
+# Segurança e privacidade
 
-O Vista Aí é um aplicativo de navegador sem contas de usuário ou servidor de dados. As turmas e os registros ficam no armazenamento do próprio navegador. Esta versão protege o banco local e os arquivos de backup e transferência com uma senha escolhida pelo professor.
+O Vista Aí e o Anota Aí são aplicações de navegador sem contas on-line ou servidor de dados. As informações ficam no armazenamento local do navegador e são criptografadas com a senha criada pelo professor. Esta versão não sincroniza dados entre aparelhos.
 
-## O que está protegido
+## Proteções existentes
 
-- O conteúdo gravado no IndexedDB ou no armazenamento alternativo do navegador é criptografado.
-- O backup completo e o arquivo diário de transferência são criptografados antes de serem baixados ou compartilhados.
-- A senha é usada no aparelho para derivar a chave de criptografia. O aplicativo não a envia para um servidor.
-- O QR do crachá é um identificador aleatório e não contém nome nem matrícula.
-- A matrícula pode ajudar a reaproveitar o mesmo identificador em cadastros repetidos. Sem matrícula, o professor pode confirmar manualmente que dois registros com o mesmo nome são da mesma pessoa.
+- O banco local e os arquivos de backup completo e transferência diária são criptografados com AES-GCM. A chave é derivada da senha no próprio aparelho.
+- A senha não é enviada para o site. O nome de usuário é apenas um nome de exibição guardado no banco local; não identifica uma conta remota.
+- Os QR Codes contêm um identificador aleatório, sem nome ou matrícula.
+- A tela é bloqueada após um período sem atividade. O usuário também pode bloqueá-la manualmente.
+- Ao deixar o aplicativo em segundo plano ou trocar de aba interna, as câmeras são encerradas. O leitor fecha após 60 segundos sem leitura.
 
-## O que ainda exige cuidado
+## Limites e cuidados
 
-- A senha não pode ser recuperada. Guarde-a em local seguro e mantenha mais de uma cópia dos backups criptografados.
-- O conteúdo fica acessível enquanto o aplicativo está desbloqueado. O app bloqueia após 10 minutos sem atividade; também bloqueie-o ao terminar e use uma senha de bloqueio no aparelho.
-- Uma planilha Excel exportada para consulta contém nomes e registros legíveis. Guarde-a com cuidado e evite compartilhá-la sem necessidade.
-- Backups antigos criados antes desta versão continuam sem criptografia. Ao restaurá-los, o Vista Aí grava os dados no banco local já criptografados; o arquivo antigo não é alterado.
-- A limpeza dos dados do site, a navegação privada, a perda ou quebra do aparelho podem apagar o banco. A criptografia não substitui backups.
-- A criptografia local protege os dados armazenados, mas não impede que alguém com acesso ao aparelho desbloqueado veja a tela. Também não protege contra um aparelho comprometido, extensões maliciosas ou código adulterado enquanto o app está sendo usado.
-- O leitor, o gerador de QR e a planilha usam bibliotecas carregadas do serviço externo jsDelivr. Essas bibliotecas executam na página; uma versão futura pode reforçar essa parte trazendo-as junto com o aplicativo e conferindo a integridade dos arquivos.
-- Os dados não são anonimizados: o aplicativo associa os códigos aleatórios aos alunos no aparelho do professor. O QR reduz a exposição de nomes no código impresso, mas a lista e as etiquetas mostram o nome para uso escolar.
+- Se a senha for esquecida, não será possível abrir o banco criptografado ou os backups correspondentes. Guarde-a em local seguro e separada dos arquivos.
+- O armazenamento local fica isolado por endereço e navegador. Apagar os dados do site, usar navegação privada, perder ou danificar o aparelho pode eliminar o banco. Backup criptografado regular continua necessário.
+- Enquanto o aplicativo estiver desbloqueado, alguém com acesso ao aparelho poderá consultar as telas. Use bloqueio de tela e bloqueie o aplicativo ao terminar.
+- Planilhas Excel exportadas para consulta são legíveis e não são criptografadas pelo aplicativo. Guarde-as em local seguro e compartilhe apenas quando necessário.
+- Backups antigos anteriores à criptografia podem continuar sem proteção. Após a restauração, os dados são gravados criptografados no aparelho; o arquivo antigo permanece como estava.
+- Criptografia local não protege contra aparelho comprometido, extensões maliciosas, código adulterado ou acesso indevido ao aparelho desbloqueado.
+- O leitor QR, o gerador de códigos e a planilha usam bibliotecas carregadas do jsDelivr. Essas bibliotecas executam na página; no futuro, elas podem ser incorporadas ao projeto e ter sua integridade verificada.
 
-## Escopo desta versão
+## Dados escolares
 
-O mesmo QR pode ser usado para vistos, chamada e saídas/retornos no cadastro local. Os registros continuam separados por turma e disciplina. O Vista Aí ainda não tem contas de professores, banco compartilhado da escola, acesso da coordenação ou portal dos responsáveis. Também não tem a aba de ocorrências.
+Os registros de vistos, chamadas, saídas/retornos e ocorrências ficam associados localmente à disciplina, turma e aluno. O mesmo QR aleatório pode ser usado para diferentes ferramentas quando os cadastros locais estiverem ligados ao mesmo identificador. A lista do professor continua associando o código ao nome do aluno.
 
-Antes de incluir ocorrências ou compartilhar informações escolares, a escola precisa definir quem terá acesso, para qual finalidade, por quanto tempo os dados serão mantidos e como serão corrigidos ou apagados. A legislação e as orientações de proteção de dados devem ser avaliadas pela escola ou por seu responsável por privacidade.
+Ocorrências podem incluir informações delicadas sobre estudantes. Registre apenas o que for necessário e objetivo, proteja o dispositivo e siga as regras da escola para acesso, finalidade, guarda, correção e descarte. Esta versão não implementa exclusão automática após um prazo, gestão de perfis de acesso, contas de professores, base compartilhada da escola ou acesso dos responsáveis. Combine esses procedimentos com a direção ou com o responsável por proteção de dados da escola antes de ampliar o uso.
 
-## Boas práticas
+## Recomendações
 
-1. Use uma senha longa que não reutilize em outros serviços.
-2. Bloqueie o aplicativo ao terminar de usar e mantenha o bloqueio de tela do aparelho ativado.
-3. Salve backups criptografados com frequência e guarde-os em local seguro.
-4. Não compartilhe a senha junto com o arquivo de backup.
-5. Proteja separadamente as planilhas Excel, pois elas não são criptografadas pelo aplicativo.
-6. Evite inserir dados além do necessário para a função escolar.
+1. Escolha uma senha longa que não reutilize em outros serviços.
+2. Faça backup criptografado regularmente e guarde mais de uma cópia em local seguro.
+3. Não envie a senha junto com o arquivo de backup.
+4. Proteja separadamente as planilhas Excel exportadas.
+5. Evite incluir dados de estudantes além do necessário para as atividades escolares.
+6. Antes de usar em larga escala, valide os fluxos com outros professores e com a escola.
