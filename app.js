@@ -1,114 +1,3422 @@
-(()=>{'use strict';
-const DB='vistos-historia-v1', STORE='state', LOCAL_STATE_KEY='vistai-state-fallback-v1',RESET_MARKER_KEY='vistai-reset-indexeddb-v1',DEFAULT_DISCIPLINE_ID='disc-historia-default',SECURE_FORMAT='vistai-secure-v1',PBKDF2_ITERATIONS=600000,MIN_PASSWORD_LENGTH=14,MAX_IMPORT_BYTES=5*1024*1024,MAX_BACKUP_BYTES=20*1024*1024,MAX_IMPORT_ROWS=5000;let state={disciplines:[],classes:[],students:[],visits:[],attendance:[],exits:[],occurrences:[],activeDisciplineId:'',profileName:'',onboardingComplete:false,onboardingStep:'',accessCount:0,activeProduct:'vista'},scanner=null,currentStudent=null,storageMode='indexedDB',vaultKey=null,vaultSalt=null,pendingLegacyState=null,gateMode='setup',activeProduct='vista',activePanel='vistaHomePanel',postChooserPanel='';
-const $=id=>document.getElementById(id), uid=()=>{if(crypto.randomUUID)return crypto.randomUUID();const b=crypto.getRandomValues(new Uint8Array(16));b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;return [...b].map((x,i)=>`${[4,6,8,10].includes(i)?'-':''}${x.toString(16).padStart(2,'0')}`).join('')};
-function setBrandPalette(product){document.body.dataset.product=product==='anota'?'anota':'vista'}
-function emptyState(){return {disciplines:[],classes:[],students:[],visits:[],attendance:[],exits:[],occurrences:[],activeDisciplineId:'',profileName:'',onboardingComplete:false,onboardingStep:'',accessCount:0,activeProduct:'vista'}}
-function dbOpen(){return new Promise((resolve,reject)=>{if(!window.indexedDB)return reject(new Error('IndexedDB indisponível'));let settled=false;const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE)};r.onsuccess=()=>{if(settled){r.result.close();return}settled=true;resolve(r.result)};r.onerror=()=>{if(!settled){settled=true;reject(r.error||new Error('Falha ao abrir o banco local'))}};r.onblocked=()=>{if(!settled){settled=true;reject(new Error('O banco local está ocupado em outra aba. Feche outras abas do Vista Aí e tente novamente.'))}}})}
-function deleteIndexedDatabase(){return new Promise((resolve,reject)=>{if(!window.indexedDB)return resolve();const r=indexedDB.deleteDatabase(DB);r.onsuccess=resolve;r.onerror=()=>reject(r.error||new Error('Falha ao excluir o banco'));r.onblocked=()=>reject(new Error('Feche as outras abas do Vista Aí para concluir a limpeza.'))})}
-function readLocalRaw(){const raw=localStorage.getItem(LOCAL_STATE_KEY);return raw?JSON.parse(raw):undefined}
-function writeLocalRaw(value){localStorage.setItem(LOCAL_STATE_KEY,JSON.stringify(value))}
-async function readIndexedRaw(){const db=await dbOpen();try{return await new Promise((resolve,reject)=>{let tx;try{tx=db.transaction(STORE,'readonly')}catch(err){reject(err);return}const r=tx.objectStore(STORE).get('app');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Falha ao ler o banco local'));tx.onabort=()=>reject(tx.error||new Error('Leitura cancelada'))})}finally{db.close()}}
-async function writeIndexedRaw(value){const db=await dbOpen();try{await new Promise((resolve,reject)=>{let tx;try{tx=db.transaction(STORE,'readwrite')}catch(err){reject(err);return}tx.objectStore(STORE).put(value,'app');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error||new Error('Falha ao gravar'));tx.onabort=()=>reject(tx.error||new Error('Gravação cancelada'))})}finally{db.close()}}
-function bytesToBase64(bytes){let binary='';for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);return btoa(binary)}function base64ToBytes(value){const binary=atob(value);return Uint8Array.from(binary,c=>c.charCodeAt(0))}
-async function deriveVaultKey(password,salt,iterations=PBKDF2_ITERATIONS){const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
-async function encryptEnvelope(payload,key=vaultKey,salt=vaultSalt){const iv=crypto.getRandomValues(new Uint8Array(12)),plain=new TextEncoder().encode(JSON.stringify(payload)),cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode(SECURE_FORMAT)},key,plain);return {format:SECURE_FORMAT,version:1,kdf:'PBKDF2-SHA-256',iterations:PBKDF2_ITERATIONS,salt:bytesToBase64(salt),iv:bytesToBase64(iv),ciphertext:bytesToBase64(new Uint8Array(cipher))}}
-async function decryptEnvelope(envelope,password){if(!envelope||envelope.format!==SECURE_FORMAT||!envelope.salt||!envelope.iv||!envelope.ciphertext)throw new Error('Arquivo não reconhecido ou sem criptografia Vista Aí.');const iterations=Number(envelope.iterations)||PBKDF2_ITERATIONS;if(iterations<100000||iterations>1000000)throw new Error('Arquivo de backup inválido.');const salt=base64ToBytes(envelope.salt),key=await deriveVaultKey(password,salt,iterations),plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:base64ToBytes(envelope.iv),additionalData:new TextEncoder().encode(SECURE_FORMAT)},key,base64ToBytes(envelope.ciphertext));return {data:JSON.parse(new TextDecoder().decode(plain)),key,salt,iterations}}
-async function save(){if(!vaultKey||!vaultSalt)throw new Error('Desbloqueie o Vista Aí para salvar alterações.');const encrypted=await encryptEnvelope(state);if(storageMode==='localStorage'){try{writeLocalRaw(encrypted);return}catch(err){throw new Error('O armazenamento local alternativo também não conseguiu salvar. Faça um backup e abra o Vista Aí em um navegador atualizado, fora da navegação privada.')}}try{await writeIndexedRaw(encrypted);storageMode='indexedDB';try{localStorage.removeItem(LOCAL_STATE_KEY)}catch{}}catch(err){try{writeLocalRaw(encrypted);storageMode='localStorage';updateStorageStatus()}catch(fallbackError){storageMode='unavailable';updateStorageStatus();throw new Error('Este navegador não conseguiu salvar os dados. Confira se o armazenamento do site está permitido e não use navegação privada.')}}}
-function normalizeState(data){if(!data||!Array.isArray(data.classes))return emptyState();const next={...emptyState(),disciplines:Array.isArray(data.disciplines)?data.disciplines:[],classes:data.classes,students:Array.isArray(data.students)?data.students:[],visits:Array.isArray(data.visits)?data.visits:[],attendance:Array.isArray(data.attendance)?data.attendance:[],exits:Array.isArray(data.exits)?data.exits:[],occurrences:Array.isArray(data.occurrences)?data.occurrences:[],activeDisciplineId:data.activeDisciplineId||'',profileName:String(data.profileName||'').trim(),onboardingComplete:!!data.onboardingComplete,onboardingStep:data.onboardingStep||'',accessCount:Number(data.accessCount)||0,activeProduct:data.activeProduct==='anota'?'anota':'vista'};if(!next.disciplines.length&&next.classes.length)next.disciplines.push({id:DEFAULT_DISCIPLINE_ID,name:'História'});next.classes.forEach(c=>{if(!c.disciplineId&&next.disciplines[0])c.disciplineId=next.disciplines[0].id});const hasLegacyClass=next.classes.some(c=>c.disciplineId===DEFAULT_DISCIPLINE_ID);if(!hasLegacyClass)next.disciplines=next.disciplines.filter(d=>d.id!==DEFAULT_DISCIPLINE_ID);next.students.forEach(s=>{s.qrToken=s.qrToken||s.id});next.activeDisciplineId=next.disciplines.some(d=>d.id===next.activeDisciplineId)?next.activeDisciplineId:(next.disciplines[0]?.id||'');return next}
-function updateStorageStatus(){let message='';if(storageMode==='localStorage')message='Banco principal indisponível; os dados criptografados estão no armazenamento local alternativo. Faça backup regularmente e evite navegação privada.';else if(storageMode==='unavailable')message='Este navegador bloqueou o armazenamento local. Os dados não podem ser salvos; abra o Vista Aí em um navegador atualizado, fora da navegação privada.';else message='Dados criptografados no armazenamento do navegador deste aparelho. Isso não substitui um backup externo e não sincroniza automaticamente.';const status=$('storageStatus');if(status)status.textContent=message;const warning=$('storageWarning');if(warning){warning.textContent=message;warning.classList.toggle('hidden',storageMode==='indexedDB')}}
-function mergeStates(indexed,fallback){const merge=(a,b)=>{const byId=new Map((Array.isArray(a)?a:[]).filter(x=>x&&x.id).map(x=>[x.id,x]));(Array.isArray(b)?b:[]).filter(x=>x&&x.id).forEach(x=>byId.set(x.id,x));return [...byId.values()]};const base=fallback||indexed||{};return {...emptyState(),disciplines:merge(indexed?.disciplines,fallback?.disciplines),classes:merge(indexed?.classes,fallback?.classes),students:merge(indexed?.students,fallback?.students),visits:merge(indexed?.visits,fallback?.visits),attendance:merge(indexed?.attendance,fallback?.attendance),exits:merge(indexed?.exits,fallback?.exits),occurrences:merge(indexed?.occurrences,fallback?.occurrences),activeDisciplineId:fallback?.activeDisciplineId||indexed?.activeDisciplineId||'',profileName:base.profileName||'',onboardingComplete:!!base.onboardingComplete,onboardingStep:base.onboardingStep||'',accessCount:Number(base.accessCount)||0,activeProduct:base.activeProduct||'vista'}}
-function configureGate(mode){gateMode=mode;document.querySelector('main').inert=true;const setup=mode==='setup';$('privacyTitle').textContent=setup?'Proteja seus dados':'Desbloqueie o Vista Aí e o Anota Aí';$('privacyDescription').textContent=setup?'Crie uma senha para criptografar os dados neste aparelho e os arquivos de backup.':'Digite sua senha para abrir os dados criptografados neste navegador.';$('profileNameWrap').classList.toggle('hidden',!setup);$('profileNameInput').required=setup;$('confirmPasswordWrap').classList.toggle('hidden',!setup);$('privacyPassword').autocomplete=setup?'new-password':'current-password';$('privacyPassword').minLength=setup?MIN_PASSWORD_LENGTH:1;$('privacyPassword').placeholder=setup?'Use pelo menos 14 caracteres':'Senha do Vista Aí';$('privacySubmit').textContent=setup?'Criar perfil e proteger':'Desbloquear';$('privacyHint').textContent=setup?'O nome é apenas para exibição neste aparelho. Ele não cria uma conta on-line. A senha não é enviada para a internet. Se esquecê-la, não será possível abrir os dados nem os backups criptografados. Guarde-a em local seguro.':'Os dados permanecem neste aparelho. Se esqueceu a senha, só um backup e a senha correspondente poderão recuperá-los.';$('privacyError').textContent='';$('privacyGate').classList.remove('hidden');setTimeout(()=>(setup?$('profileNameInput'):$('privacyPassword')).focus(),100)}
-async function inspectStoredData(){let fallback,indexed,resetPending=false;try{resetPending=localStorage.getItem(RESET_MARKER_KEY)==='1'}catch{}if(resetPending){try{await deleteIndexedDatabase();localStorage.removeItem(RESET_MARKER_KEY)}catch{try{fallback=readLocalRaw()}catch{}storageMode='localStorage';if(fallback?.format===SECURE_FORMAT)return {kind:'encrypted',envelope:fallback};if(fallback){pendingLegacyState=normalizeState(fallback);return {kind:'legacy'}}pendingLegacyState=emptyState();return {kind:'new'}}}try{fallback=readLocalRaw()}catch{}try{indexed=await readIndexedRaw();storageMode='indexedDB'}catch{storageMode=fallback?'localStorage':'unavailable'}const encrypted=[indexed,fallback].find(x=>x?.format===SECURE_FORMAT);if(encrypted){pendingLegacyState=null;return {kind:'encrypted',envelope:encrypted}}const legacyIndex=indexed&&indexed.format!==SECURE_FORMAT?indexed:undefined,legacyFallback=fallback&&fallback.format!==SECURE_FORMAT?fallback:undefined;if(legacyIndex!==undefined||legacyFallback!==undefined){pendingLegacyState=normalizeState(legacyIndex!==undefined&&legacyFallback!==undefined?mergeStates(legacyIndex,legacyFallback):(legacyIndex||legacyFallback));storageMode=legacyIndex!==undefined?'indexedDB':'localStorage';return {kind:'legacy'}}storageMode=storageMode==='unavailable'?'unavailable':'indexedDB';pendingLegacyState=emptyState();return {kind:'new'}}
-async function prepareApp(){if(!window.crypto?.subtle){storageMode='unavailable';configureGate('setup');$('privacyDescription').textContent='Este navegador não oferece a proteção criptográfica necessária. Atualize o Safari ou Chrome e abra o Vista Aí pelo endereço HTTPS.';$('privacySubmit').disabled=true;return}let stored;try{stored=await inspectStoredData()}catch(err){storageMode='unavailable';configureGate('setup');$('privacyDescription').textContent='Não foi possível acessar o armazenamento. Confira se o navegador permite dados do site e tente novamente.';$('privacySubmit').disabled=true;return}configureGate(stored.kind==='encrypted'?'unlock':'setup');if(storageMode==='unavailable'&&stored.kind==='new'){$('privacyDescription').textContent='Este navegador bloqueou o armazenamento local. Abra o Vista Aí em um navegador atualizado, fora da navegação privada.';$('privacySubmit').disabled=true}}
-async function completeUnlock(password){const stored=await inspectStoredData();let savedDuringUpgrade=false;if(stored.kind==='encrypted'){const opened=await decryptEnvelope(stored.envelope,password);state=normalizeState(opened.data);vaultKey=opened.key;vaultSalt=opened.salt;storageMode=storageMode==='localStorage'?'localStorage':'indexedDB';if(opened.iterations<PBKDF2_ITERATIONS){vaultKey=await deriveVaultKey(password,vaultSalt,PBKDF2_ITERATIONS);try{await save();savedDuringUpgrade=true}catch(err){state=emptyState();vaultKey=null;vaultSalt=null;throw new Error('Não foi possível atualizar a proteção do banco local. Os dados antigos continuam no aparelho; tente novamente em um navegador atualizado.')}}}else{if(password.length<MIN_PASSWORD_LENGTH)throw new Error('Use uma senha com pelo menos 14 caracteres.');if(password!==$('privacyPasswordConfirm').value)throw new Error('As senhas não coincidem.');const profileName=$('profileNameInput').value.trim();if(profileName.length<2)throw new Error('Digite o nome pelo qual quer ser chamada.');if(storageMode==='unavailable')throw new Error('O armazenamento deste navegador está indisponível.');state=normalizeState(pendingLegacyState||emptyState());state.profileName=profileName;vaultSalt=crypto.getRandomValues(new Uint8Array(16));vaultKey=await deriveVaultKey(password,vaultSalt);if(storageMode!=='localStorage')storageMode='indexedDB';}if(!savedDuringUpgrade)await save();if(storageMode==='indexedDB'){try{localStorage.removeItem(LOCAL_STATE_KEY);localStorage.removeItem(RESET_MARKER_KEY)}catch{}}$('privacyGate').classList.add('hidden');$('privacyPassword').value='';$('privacyPasswordConfirm').value='';$('profileNameInput').value='';$('privacySubmit').disabled=false;render();updateStorageStatus();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});await routeAfterUnlock()}
-let hiddenLockTimer=null,idleLockTimer=null;async function lockApp(){clearTimeout(idleLockTimer);clearTimeout(hiddenLockTimer);await stopScanner();await stopActionScanner();if(secretResolver)finishSecret(null);currentStudent=null;state=emptyState();vaultKey=null;vaultSalt=null;if($('studentResult'))$('studentResult').classList.add('hidden');if($('occurrenceNotes'))$('occurrenceNotes').value='';configureGate('unlock');$('privacyPassword').value='';$('privacyPasswordConfirm').value='';render()}function resetIdleLock(){clearTimeout(idleLockTimer);if(vaultKey)idleLockTimer=setTimeout(()=>lockApp().catch(()=>{}),10*60*1000)}['click','keydown','touchstart','pointerdown'].forEach(name=>document.addEventListener(name,resetIdleLock,{passive:true}));
-let secretResolver=null;function requestFilePassword(title,description){return new Promise(resolve=>{secretResolver=resolve;document.querySelector('main').inert=true;$('secretTitle').textContent=title;$('secretDescription').textContent=description;$('secretError').textContent='';$('secretPassword').value='';$('secretGate').classList.remove('hidden');setTimeout(()=>$('secretPassword').focus(),100)})}
-function finishSecret(value){$('secretGate').classList.add('hidden');document.querySelector('main').inert=false;$('secretPassword').value='';if(secretResolver){secretResolver(value);secretResolver=null}}
-$('secretForm').addEventListener('submit',e=>{e.preventDefault();finishSecret($('secretPassword').value)});$('secretCancel').addEventListener('click',()=>finishSecret(null));
-$('privacyForm').addEventListener('submit',async e=>{e.preventDefault();$('privacySubmit').disabled=true;$('privacyError').textContent='';try{await completeUnlock($('privacyPassword').value)}catch(err){$('privacyError').textContent=gateMode==='unlock'?'Senha incorreta ou arquivo de dados danificado. Confira a senha e tente novamente.':(err.message||'Não foi possível proteger os dados.');$('privacyPassword').focus()}finally{if(!$('privacyGate').classList.contains('hidden'))$('privacySubmit').disabled=false}});
- const NAV_ITEMS={vista:[['vistaHomePanel','Início'],['scanPanel','Dar visto'],['classesPanel','Turmas e alunos'],['labelsPanel','QR Codes'],['historyPanel','Histórico'],['backupPanel','Backup'],['howToPanel','Como Usar'],['donationsPanel','Doações']],anota:[['anotaHomePanel','Início'],['attendancePanel','Presença'],['exitPanel','Saídas de sala'],['occurrencesPanel','Ocorrências'],['classesPanel','Turmas e alunos'],['labelsPanel','QR Codes'],['anotaHistoryPanel','Histórico'],['backupPanel','Backup'],['howToPanel','Como Usar'],['donationsPanel','Doações']]};
-function renderProductNav(){const nav=$('productNav');if(!nav)return;const fragment=document.createDocumentFragment();for(const [id,label] of NAV_ITEMS[activeProduct]){const button=makeElement('button','tab'+(activePanel===id?' active':''),label);button.type='button';button.dataset.panel=id;fragment.append(button)}nav.replaceChildren(fragment);$('primaryActions').classList.toggle('anota-mode',activeProduct==='anota')}
-function setPanel(panelId){activePanel=panelId;document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id===panelId));document.querySelectorAll('#productNav [data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===panelId));renderProductNav()}
-async function closeAllCameras(){await stopScanner();await stopActionScanner()}
-async function showPanel(panelId){await closeAllCameras();setPanel(panelId);render();window.scrollTo({top:0,behavior:'smooth'})}
-function showProductChooser(){document.querySelector('main').inert=true;$('onboardingGate').classList.add('hidden');$('supportReminder').classList.add('hidden');$('productChooser').classList.remove('hidden')}
-async function openProduct(product){activeProduct=product==='anota'?'anota':'vista';state.activeProduct=activeProduct;setBrandPalette(activeProduct);$('productChooser').classList.add('hidden');$('supportReminder').classList.add('hidden');$('onboardingGate').classList.add('hidden');document.querySelector('main').inert=false;renderProductNav();const panel=postChooserPanel|| (activeProduct==='anota'?'anotaHomePanel':'vistaHomePanel');postChooserPanel='';await closeAllCameras();setPanel(panel);render();try{await save()}catch(err){toast(err.message||'Não foi possível salvar esta preferência.')}window.scrollTo({top:0,behavior:'smooth'})}
-function renderOnboarding(step){state.onboardingStep=step;const content=$('onboardingContent'),progressText=step==='profile'?'Configuração inicial • Perfil':step==='discipline'?'Configuração inicial • Disciplina':step==='intro'?'Conheça o projeto':'Configuração inicial • Apoio opcional',fragment=document.createDocumentFragment(),progress=makeElement('div','flow-progress',progressText);fragment.append(progress);const heading=(text)=>{const node=makeElement('h1','',text);node.id='onboardingTitle';fragment.append(node);return node},paragraph=(text,className='')=>fragment.append(makeElement('p',className,text)),action=(label,value,className='primary')=>{const button=makeElement('button',className,label);button.type='button';button.dataset.onboarding=value;return button};if(step==='profile'){heading('Como podemos chamar você?');paragraph('Este nome aparece neste aparelho. O Vista Aí não cria uma conta na internet.');const label=makeElement('label','','Nome de exibição');label.htmlFor='onboardingProfileName';const input=makeElement('input');input.id='onboardingProfileName';input.maxLength=60;input.placeholder='Ex.: Professora Ana';input.value=state.profileName||'';input.autocomplete='nickname';fragment.append(label,input);const actions=makeElement('div','flow-actions');actions.append(action('Continuar','save-profile'));fragment.append(actions)}else if(step==='discipline'){heading('Cadastre sua primeira disciplina');paragraph('As turmas, os alunos e os registros ficam separados por disciplina. Você poderá cadastrar outras agora ou depois.');const row=makeElement('div','row form-row'),input=makeElement('input','grow');input.id='firstDisciplineName';input.placeholder='Ex.: História';row.append(input,action('Adicionar disciplina','add-discipline'));fragment.append(row);const badges=makeElement('div','row');badges.classList.add('mt-12');if(state.disciplines.length){for(const discipline of state.disciplines)badges.append(makeElement('span','badge',discipline.name))}else badges.append(makeElement('span','muted','Nenhuma disciplina adicionada ainda.'));fragment.append(badges);const actions=makeElement('div','flow-actions'),next=action('Continuar','continue-intro');next.disabled=!state.disciplines.length;actions.append(next);fragment.append(actions)}else if(step==='intro'){heading('Dois espaços para organizar sua rotina');const choices=makeElement('div','product-choices intro-choices');for(const item of [{name:'Vista Aí',src:'assets/logo-vistaai.webp',description:'Vistos das atividades, notas e histórico por turma.',className:'product-choice'},{name:'Anota Aí',src:'assets/logo-anotaai.webp',description:'Chamada, saídas de sala e ocorrências.',className:'product-choice anota-choice'}]){const card=makeElement('article',item.className),image=makeElement('img');image.src=item.src;image.alt='Mascote '+item.name;card.append(image,makeElement('strong','',item.name),makeElement('span','',item.description));choices.append(card)}fragment.append(choices);paragraph('As duas áreas usam as mesmas turmas e o mesmo QR do crachá. Os dados ficam criptografados neste aparelho.');const actions=makeElement('div','flow-actions');actions.append(action('Continuar','continue-support'));fragment.append(actions)}else{heading('O projeto é gratuito para usar');paragraph('Uma contribuição é opcional e ajuda a manter o domínio e preparar melhorias. Você pode apoiar por Pix, contribuir uma vez ou escolher apoio mensal. A doação não libera funções: as ferramentas continuam gratuitas.');const grid=makeElement('div','donation-grid'),pix=makeElement('div','donation-option'),pixTitle=makeElement('h3','','Pix'),image=makeElement('img','pix-qr');image.src='assets/pix-vistaai.jpeg';image.alt='QR Code Pix para contribuição';const copy=makeElement('button','tab','Copiar código Pix');copy.id='copyPixCodeOnboarding';copy.type='button';pix.append(pixTitle,image,copy);const links=makeElement('div','donation-option');links.append(makeElement('h3','','Contribuição avulsa'));const once=makeElement('a','tab primary donation-link','Apoiar uma vez');once.href='https://mpago.la/2qUapT1';once.target='_blank';once.rel='noopener noreferrer';const recurringTitle=makeElement('h3','','Apoio mensal');recurringTitle.classList.add('mt-16');const recurring=makeElement('a','tab donation-link','Apoiar mensalmente');recurring.href='https://mpago.la/23pEhPy';recurring.target='_blank';recurring.rel='noopener noreferrer';links.append(once,recurringTitle,recurring);grid.append(pix,links);fragment.append(grid);paragraph('Não quer contribuir? Sem problema. Basta continuar. O uso é gratuito.','donation-note');const actions=makeElement('div','flow-actions');actions.append(action('Agora não','finish','tab'),action('Continuar gratuitamente','finish','primary'));fragment.append(actions)}content.replaceChildren(fragment);document.querySelector('main').inert=true;$('onboardingGate').classList.remove('hidden');$('productChooser').classList.add('hidden');$('supportReminder').classList.add('hidden');if(step==='profile')setTimeout(()=>$('onboardingProfileName')?.focus(),50);if(step==='discipline')setTimeout(()=>$('firstDisciplineName')?.focus(),50)}
-function showOnboarding(step){renderOnboarding(step)}
-async function routeAfterUnlock(){state.accessCount=(Number(state.accessCount)||0)+1;await save();render();updateStorageStatus();if(!state.profileName){showOnboarding('profile');return}if(!state.onboardingComplete){showOnboarding(state.disciplines.length?'intro':'discipline');return}if(state.accessCount%10===0){document.querySelector('main').inert=true;$('supportReminder').classList.remove('hidden');$('productChooser').classList.add('hidden');return}showProductChooser()}
-async function advanceOnboarding(action){if(action==='save-profile'){const value=$('onboardingProfileName').value.trim();if(value.length<2)return toast('Digite um nome com pelo menos 2 caracteres.');state.profileName=value;state.onboardingStep=state.disciplines.length?'intro':'discipline';await save();renderOnboarding(state.onboardingStep);return}if(action==='add-discipline'){const name=$('firstDisciplineName').value.trim();if(!name)return toast('Digite o nome da disciplina.');if(state.disciplines.some(d=>d.name.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))return toast('Essa disciplina já está cadastrada.');const d={id:uid(),name};state.disciplines.push(d);state.activeDisciplineId=d.id;await save();render();renderOnboarding('discipline');return}if(action==='add-another'){const input=$('firstDisciplineName');if(input){input.focus();if(!input.value.trim())return toast('Digite uma disciplina e toque em Adicionar disciplina.')}return}if(action==='continue-intro'){if(!state.disciplines.length)return toast('Cadastre pelo menos uma disciplina.');state.onboardingStep='intro';await save();renderOnboarding('intro');return}if(action==='continue-support'){state.onboardingStep='support';await save();renderOnboarding('support');return}if(action==='finish'){state.onboardingComplete=true;state.onboardingStep='';await save();$('onboardingGate').classList.add('hidden');showProductChooser()}}
-async function finishReminder(action){$('supportReminder').classList.add('hidden');if(action==='donations'){postChooserPanel='donationsPanel'}showProductChooser()}
-function toast(msg){$('toast').textContent=msg;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),2800)}
-async function copyPixCode(){const field=$('pixCode');if(!field)return;try{await navigator.clipboard.writeText(field.value);toast('Código Pix copiado.')}catch{field.focus();field.select();field.setSelectionRange(0,field.value.length);const copied=document.execCommand('copy');toast(copied?'Código Pix copiado.':'Selecione o código Pix e use Copiar.') }}
-$('copyPixCode')?.addEventListener('click',copyPixCode);
-function makeElement(tag,className='',text){const element=document.createElement(tag);if(className)element.className=className;if(text!==undefined)element.textContent=String(text);return element}function emptyMessage(target,text){target.replaceChildren(makeElement('p','muted',text))}function formatLocalDate(value){const date=new Date(value);return Number.isNaN(date.getTime())?'Data inválida':date.toLocaleDateString('pt-BR')}function formatLocalDateTime(value){const date=new Date(value);return Number.isNaN(date.getTime())?'Data inválida':date.toLocaleString('pt-BR')}function cls(id){return state.classes.find(c=>c.id===id)}function student(id){return state.students.find(s=>s.id===id)}function qrTokenForRegistration(){return uid()}function qrTokenForManual(registration,name,classId){const key=String(registration||'').trim().toLocaleLowerCase('pt-BR'),normalized=normalizeHeader(name),matches=state.students.filter(s=>s.classId!==classId&&(key?String(s.registration||'').trim().toLocaleLowerCase('pt-BR')===key:normalizeHeader(s.name)===normalized)),shared=[...new Set(matches.map(s=>String(s.qrToken||s.id)))];if(matches.length===1&&shared.length===1&&confirm(`Já existe “${matches[0].name}” em outra turma. É o mesmo aluno e você quer usar o mesmo QR do crachá?`))return shared[0];if(matches.length>1)toast(key?'Há vários alunos com essa matrícula. O QR será individual; use Unificar QR após conferir os cadastros.':'Há vários alunos com esse nome. O QR será individual; use Unificar QR após conferir os cadastros.');return uid()}function qrLinkCandidate(s){const matches=state.students.filter(x=>x.id!==s.id&&x.classId!==s.classId&&normalizeHeader(x.name)===normalizeHeader(s.name)&&String(x.qrToken||x.id)!==String(s.qrToken||s.id)),tokens=[...new Set(matches.map(x=>String(x.qrToken||x.id)))];return matches.length&&tokens.length===1?matches[0]:matches.length===1?matches[0]:null}function score(mode,c,studentId){const visits=state.visits.filter(v=>v.classId===c.id&&v.studentId===studentId);const sum=visits.reduce((a,v)=>a+v.value,0);if(mode==='average')return visits.length?sum/visits.length:0;if(mode==='scaled')return visits.length?sum/visits.length*(Number(c.maxGrade)||10):0;return sum}
-function classesForActive(){return state.classes.filter(c=>c.disciplineId===state.activeDisciplineId)}
-function selectOptions(el,choices=classesForActive()){const old=el.value,fragment=document.createDocumentFragment(),placeholder=makeElement('option','',choices.length?'Selecione uma turma':'Nenhuma turma cadastrada');placeholder.value='';fragment.append(placeholder);for(const item of choices){const option=makeElement('option','',item.name);option.value=item.id;fragment.append(option)}el.replaceChildren(fragment);el.value=choices.some(item=>item.id===old)?old:'';el.disabled=!choices.length}
-function render(){const openClassIds=new Set([...document.querySelectorAll('details.class-accordion[open]')].map(node=>node.dataset.classAccordion)),active=state.disciplines.find(item=>item.id===state.activeDisciplineId)||state.disciplines[0]||null;state.activeDisciplineId=active?.id||'';const disciplineSelect=$('activeDiscipline'),disciplineOptions=document.createDocumentFragment(),disciplinePlaceholder=makeElement('option','',state.disciplines.length?'Selecione uma disciplina':'Nenhuma disciplina cadastrada');disciplinePlaceholder.value='';disciplineOptions.append(disciplinePlaceholder);for(const discipline of state.disciplines){const option=makeElement('option','',discipline.name);option.value=discipline.id;disciplineOptions.append(option)}disciplineSelect.replaceChildren(disciplineOptions);disciplineSelect.value=state.activeDisciplineId;disciplineSelect.disabled=!state.disciplines.length;$('classDisciplineLabel').textContent=active?.name||'nenhuma disciplina selecionada';$('addClass').disabled=!active;const disciplinesList=$('disciplineList'),disciplineBadges=document.createDocumentFragment();for(const discipline of state.disciplines)disciplineBadges.append(makeElement('span','badge',discipline.name));disciplinesList.replaceChildren(disciplineBadges);const visible=classesForActive();for(const id of ['scanClass','importClass','historyClass','labelsClass','actionClass','exitClass','occurrenceClass','attendanceHistoryClass','anotaHistoryClass'])selectOptions($(id),visible);const home=document.createDocumentFragment(),anotaHome=document.createDocumentFragment(),classCards=document.createDocumentFragment();for(const classRecord of visible){const students=state.students.filter(item=>item.classId===classRecord.id).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR')),studentCount=students.length,visitCount=state.visits.filter(item=>item.classId===classRecord.id).length,attendanceCount=state.attendance.filter(item=>item.classId===classRecord.id).length;const homeDetails=makeElement('details','item class-home-accordion'),homeSummary=makeElement('summary'),homeTitle=makeElement('strong','',classRecord.name),homeMeta=makeElement('span','muted',studentCount+' alunos • '+visitCount+' vistos'),homeText=makeElement('span');homeText.append(homeTitle,homeMeta);homeSummary.append(homeText);const homeActions=makeElement('div','row between class-home-actions'),homeHint=makeElement('span','muted','Abra o histórico para consultar os resultados.'),historyButton=makeElement('button','smallbtn','Ver resultados');historyButton.type='button';historyButton.dataset.go='historyPanel';historyButton.dataset.class=classRecord.id;homeActions.append(homeHint,historyButton);homeDetails.append(homeSummary,homeActions);home.append(homeDetails);const anotaDetails=makeElement('details','item'),anotaSummary=makeElement('summary'),anotaTitle=makeElement('strong','',classRecord.name),anotaMeta=makeElement('span','muted',studentCount+' alunos • '+attendanceCount+' registros de chamada');anotaSummary.append(anotaTitle,anotaMeta);anotaDetails.append(anotaSummary);anotaHome.append(anotaDetails);const card=makeElement('details','card class-accordion');card.dataset.classAccordion=classRecord.id;card.open=openClassIds.has(classRecord.id);const summary=makeElement('summary'),summaryText=makeElement('span','',classRecord.name+' '),countBadge=makeElement('span','badge',studentCount+' aluno(s)');summaryText.append(countBadge);summary.append(summaryText);const body=makeElement('div','class-accordion-body'),entry=makeElement('div','row student-entry'),nameInput=makeElement('input','grow'),registrationInput=makeElement('input','grow'),addButton=makeElement('button','smallbtn primary','Adicionar');nameInput.placeholder='Nome do aluno';nameInput.setAttribute('aria-label','Nome do aluno da turma '+classRecord.name);nameInput.dataset.newstudent='';registrationInput.placeholder='Matrícula (opcional)';registrationInput.setAttribute('aria-label','Matrícula opcional do aluno');registrationInput.dataset.reg='';addButton.type='button';addButton.dataset.addstudent=classRecord.id;entry.append(nameInput,registrationInput,addButton);const studentList=makeElement('div','list');studentList.classList.add('mt-10');if(!students.length)studentList.append(makeElement('p','muted','Nenhum aluno cadastrado nesta turma.'));for(const person of students){const item=makeElement('div','item row between'),identity=makeElement('span');identity.append(document.createTextNode(person.name));if(person.registration)identity.append(makeElement('span','muted',' • '+person.registration));item.append(identity);if(qrLinkCandidate(person)){const shareButton=makeElement('button','smallbtn','Unificar QR');shareButton.type='button';shareButton.dataset.shareQr=person.id;item.append(shareButton)}const removeButton=makeElement('button','smallbtn danger','Remover');removeButton.type='button';removeButton.dataset.delstudent=person.id;item.append(removeButton);studentList.append(item)}body.append(entry,studentList);card.append(summary,body);classCards.append(card)}if(visible.length){$('homeClasses').replaceChildren(home);$('anotaHomeClasses').replaceChildren(anotaHome);$('classesList').replaceChildren(classCards)}else{emptyMessage($('homeClasses'),state.disciplines.length?'Nenhuma turma cadastrada nesta disciplina.':'Cadastre uma disciplina em “Turmas e alunos” para começar.');emptyMessage($('anotaHomeClasses'),'Nenhuma turma cadastrada nesta disciplina.');emptyMessage($('classesList'),state.disciplines.length?'Crie uma turma nesta disciplina para começar.':'Cadastre uma disciplina para criar sua primeira turma.')}renderProductNav();renderHistory();renderLabels();renderAttendancePanel();renderExitPanel();renderOccurrences();renderAttendanceHistory();renderAnotaHistory();$('maxGradeWrap').classList.toggle('hidden',$('gradeMode').value!=='scaled')}
-function renderHistory(){const id=$('historyClass').value,c=cls(id);if(!c){emptyMessage($('gradeSummary'),'Cadastre uma turma primeiro.');$('historyList').replaceChildren();$('gradeAccordion').querySelector('summary').textContent='Resultados por aluno';$('historyAccordion').querySelector('summary').textContent='Vistos registrados';return}const mode=c.gradeMode||'sum';$('gradeMode').value=mode;$('maxGrade').value=c.maxGrade||10;$('maxGradeWrap').classList.toggle('hidden',mode!=='scaled');const people=state.students.filter(s=>s.classId===id).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));$('gradeAccordion').querySelector('summary').textContent='Resultados por aluno ('+people.length+')';const summary=$('gradeSummary');summary.replaceChildren();if(!people.length)emptyMessage(summary,'Nenhum aluno nesta turma.');for(const s of people){const row=makeElement('div','item row between'),info=makeElement('div'),name=makeElement('strong','',s.name),count=state.visits.filter(v=>v.classId===id&&v.studentId===s.id).length,visits=makeElement('div','muted',count+' vistos'),grade=score(mode,c,s.id),gradeText=grade.toLocaleString('pt-BR',{maximumFractionDigits:2})+(mode==='scaled'?' / '+(Number(c.maxGrade)||10):mode==='average'?' / 1':'');info.append(name,visits);row.append(info,makeElement('strong','',gradeText));summary.append(row)}const rows=state.visits.filter(v=>v.classId===id).sort((a,b)=>String(b.timestamp||'').localeCompare(String(a.timestamp||'')));$('historyAccordion').querySelector('summary').textContent='Vistos registrados ('+rows.length+')';const list=$('historyList');list.replaceChildren();if(!rows.length)emptyMessage(list,'Nenhum visto registrado.');for(const v of rows){const item=makeElement('div','item'),head=makeElement('div','row between'),who=makeElement('strong','',student(v.studentId)?.name||'Aluno removido'),badge=makeElement('span','badge',(v.statusLabel||'Situação')+' · '+Number(v.value||0).toLocaleString('pt-BR')),activity=makeElement('div','',v.activity||''),date=makeElement('div','muted',formatLocalDateTime(v.timestamp));head.append(who,badge);item.append(head,activity,date);list.append(item)}}
-function renderLabels(){const id=$('labelsClass').value,selectedClass=cls(id),students=state.students.filter(s=>s.classId===id).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR')),discipline=state.disciplines.find(d=>d.id===selectedClass?.disciplineId),grid=$('labelsGrid');grid.replaceChildren();for(const s of students){const label=makeElement('div','qr-label');label.append(makeElement('strong','',s.name),makeElement('span','',(discipline?.name||'')+' • '+(selectedClass?.name||'')));const target=makeElement('div');target.id='qr-'+s.id;label.append(target);grid.append(label)}if(window.QRCode)students.forEach(s=>new QRCode($('qr-'+s.id),{text:String(s.qrToken||s.id),width:112,height:112,correctLevel:QRCode.CorrectLevel.M}))}
-function todayKey(){return $('actionDate').value||localDateKey()}
-function renderAttendancePanel(){const classId=$('actionClass').value,c=cls(classId),students=state.students.filter(s=>s.classId===classId).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR')),day=todayKey(),roster=$('attendanceRoster');if(!c){emptyMessage(roster,'Cadastre e selecione uma turma primeiro.');$('attendanceSummary').textContent='';$('attendanceRosterSummary').textContent='Mostrar lista de alunos';return}const todays=state.attendance.filter(x=>x.classId===classId&&x.dateKey===day),byStudent=new Map(todays.map(x=>[x.studentId,x.status])),present=todays.filter(x=>x.status==='present').length,absent=todays.filter(x=>x.status==='absent').length;$('attendanceSummary').textContent=present+' presente(s) • '+absent+' ausente(s) • '+Math.max(0,students.length-present-absent)+' sem marcação';$('attendanceRosterSummary').textContent='Mostrar lista de alunos ('+students.length+')';roster.replaceChildren();if(!students.length)emptyMessage(roster,'Nenhum aluno nesta turma.');for(const s of students){const status=byStudent.get(s.id),item=makeElement('div','item presence-row'),nameWrap=makeElement('span'),name=makeElement('strong','',s.name),statusText=makeElement('span','muted',status?' • '+(status==='present'?'Presente':'Ausente'):' • Sem marcação'),actions=makeElement('div','presence-actions'),presentButton=makeElement('button','present-btn','Presente'),absentButton=makeElement('button','absent-btn','Ausente');presentButton.type='button';presentButton.dataset.markPresence=s.id;presentButton.dataset.presenceStatus='present';absentButton.type='button';absentButton.dataset.markPresence=s.id;absentButton.dataset.presenceStatus='absent';nameWrap.append(name,statusText);actions.append(presentButton,absentButton);item.append(nameWrap,actions);roster.append(item)}}
-function renderExitSummary(classId,students){const details=makeElement('details','accordion-block'),summary=makeElement('summary','', 'Mostrar resumo dos alunos ('+students.length+')'),list=makeElement('div','list accordion-content');for(const s of students){const trips=state.exits.filter(x=>x.classId===classId&&x.studentId===s.id),minutes=trips.reduce((total,x)=>total+(x.returnAt?Math.max(0,Math.round((Date.parse(x.returnAt)-Date.parse(x.departureAt))/60000)):0),0),open=trips.filter(x=>!x.returnAt).length,row=makeElement('div','item row between');row.append(makeElement('strong','',s.name),makeElement('span','muted',trips.length+' saída(s) • '+minutes+' min fora'+(open?' • fora agora':'')));list.append(row)}if(!students.length)emptyMessage(list,'Nenhum aluno nesta turma.');details.append(summary,list);$('exitSummary').replaceChildren(details)}
-function renderExitPanel(){const classId=$('exitClass').value,c=cls(classId),students=state.students.filter(s=>s.classId===classId).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR')),history=$('exitHistory');if(!c){history.replaceChildren();emptyMessage($('exitSummary'),'Cadastre e selecione uma turma primeiro.');return}renderExitSummary(classId,students);const trips=state.exits.filter(x=>x.classId===classId).sort((a,b)=>String(b.departureAt||'').localeCompare(String(a.departureAt||''))).slice(0,60);history.replaceChildren();if(!trips.length)emptyMessage(history,'Nenhuma saída registrada nesta turma.');for(const x of trips){const duration=x.returnAt?Math.max(0,Math.round((Date.parse(x.returnAt)-Date.parse(x.departureAt))/60000)):null,item=makeElement('div','item'),dateText='Saiu: '+formatLocalDateTime(x.departureAt)+(x.returnAt?' • Retornou: '+formatLocalDateTime(x.returnAt)+' • Fora por '+duration+' min':' • Ainda fora');item.append(makeElement('strong','',student(x.studentId)?.name||'Aluno removido'),makeElement('div','muted',dateText));history.append(item)}}
-function renderOccurrences(){const classId=$('occurrenceClass').value,oldStudent=$('occurrenceStudent').value,people=state.students.filter(s=>s.classId===classId).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR')),select=$('occurrenceStudent');select.replaceChildren();const placeholder=makeElement('option','',people.length?'Selecione um aluno':'Nenhum aluno nesta turma');placeholder.value='';select.append(placeholder);for(const s of people){const option=makeElement('option','',s.name);option.value=s.id;select.append(option)}select.value=people.some(s=>s.id===oldStudent)?oldStudent:'';const rows=state.occurrences.filter(x=>x.classId===classId).sort((a,b)=>String(b.timestamp||'').localeCompare(String(a.timestamp||''))).slice(0,100);$('occurrenceHistorySummary').textContent='Registros recentes ('+rows.length+')';const history=$('occurrenceHistory');history.replaceChildren();if(!rows.length)emptyMessage(history,'Nenhuma ocorrência registrada nesta turma.');for(const x of rows){const item=makeElement('div','item occurrence-history-item'),top=makeElement('div','row between'),middle=makeElement('div','',x.notes||''),bottom=makeElement('div','row between'),date=formatLocalDateTime(x.timestamp)+(x.incidentDate?' • Data: '+formatLocalDate(x.incidentDate+'T12:00:00'):''),deleteButton=makeElement('button','smallbtn danger','Apagar registro');deleteButton.type='button';deleteButton.dataset.deleteOccurrence=x.id;top.append(makeElement('strong','',student(x.studentId)?.name||'Aluno removido'),makeElement('span','badge',x.category||'Outro'));bottom.append(makeElement('span','muted',date),deleteButton);item.append(top,middle,bottom);history.append(item)}}
-function renderAttendanceHistory(){const classId=$('attendanceHistoryClass').value,month=$('attendanceHistoryMonth').value,summary=$('attendanceHistorySummary'),list=$('attendanceHistoryList');if(!classId||!month){summary.textContent='Selecione uma turma e um mês.';list.replaceChildren();return}const records=state.attendance.filter(x=>x.classId===classId&&String(x.dateKey||'').startsWith(month)).sort((a,b)=>String(b.dateKey||'').localeCompare(String(a.dateKey||''))||String(a.timestamp||'').localeCompare(String(b.timestamp||''))),days=[...new Set(records.map(x=>x.dateKey))].sort((a,b)=>b.localeCompare(a));summary.textContent=days.length+' chamada(s) • '+records.length+' marcação(ões) no mês';list.replaceChildren();if(!days.length)emptyMessage(list,'Nenhuma chamada encontrada neste mês.');for(const day of days){const rows=records.filter(x=>x.dateKey===day),present=rows.filter(x=>x.status==='present').length,absent=rows.filter(x=>x.status==='absent').length,details=makeElement('details','accordion-block'),heading=makeElement('summary','',formatLocalDate(day+'T12:00:00')+' • '+present+' presente(s) • '+absent+' ausente(s)'),body=makeElement('div','list accordion-content');for(const x of rows){const row=makeElement('div','item row between');row.append(makeElement('span','',student(x.studentId)?.name||'Aluno removido'),makeElement('span','badge',x.status==='present'?'Presente':'Ausente'));body.append(row)}details.append(heading,body);list.append(details)}}
-function renderAnotaHistory(){const classId=$('anotaHistoryClass').value,month=$('anotaHistoryMonth').value,c=cls(classId),summary=$('anotaHistorySummary'),attendanceList=$('anotaAttendanceHistoryList'),exitList=$('anotaExitHistoryList'),occurrenceList=$('anotaOccurrenceHistoryList');if(!c||!month){summary.textContent='Selecione uma turma e um mês.';attendanceList.replaceChildren();exitList.replaceChildren();occurrenceList.replaceChildren();return}const attendance=state.attendance.filter(x=>x.classId===classId&&String(x.dateKey||'').startsWith(month)).sort((a,b)=>String(a.dateKey||'').localeCompare(String(b.dateKey||''))||String(student(a.studentId)?.name||'').localeCompare(String(student(b.studentId)?.name||''),'pt-BR')),exits=state.exits.filter(x=>x.classId===classId&&((x.departureAt&&localDateKey(new Date(x.departureAt)).startsWith(month))||(x.returnAt&&localDateKey(new Date(x.returnAt)).startsWith(month)))).sort((a,b)=>String(b.departureAt||'').localeCompare(String(a.departureAt||''))),occurrences=state.occurrences.filter(x=>x.classId===classId&&String(x.incidentDate||(x.timestamp?localDateKey(new Date(x.timestamp)):'' )).startsWith(month)).sort((a,b)=>String(b.timestamp||'').localeCompare(String(a.timestamp||''))),discipline=state.disciplines.find(d=>d.id===c.disciplineId);summary.textContent=(discipline?.name||'')+' • '+c.name+' • '+month+' — '+attendance.length+' marcação(ões), '+exits.length+' saída(s), '+occurrences.length+' ocorrência(s)';attendanceList.replaceChildren();exitList.replaceChildren();occurrenceList.replaceChildren();if(!attendance.length)emptyMessage(attendanceList,'Nenhuma chamada neste mês.');for(const x of attendance){const item=makeElement('div','item row between'),left=makeElement('span'),who=makeElement('strong','',student(x.studentId)?.name||'Aluno removido'),date=makeElement('span','muted',' • '+formatLocalDate(x.dateKey+'T12:00:00'));left.append(who,date);item.append(left,makeElement('span','badge',x.status==='present'?'Presente':'Ausente'));attendanceList.append(item)}if(!exits.length)emptyMessage(exitList,'Nenhuma saída ou retorno neste mês.');for(const x of exits){const duration=x.returnAt?Math.max(0,Math.round((Date.parse(x.returnAt)-Date.parse(x.departureAt))/60000)):null,item=makeElement('div','item'),date='Saiu: '+formatLocalDateTime(x.departureAt)+(x.returnAt?' • Retornou: '+formatLocalDateTime(x.returnAt)+' • Fora por '+duration+' min':' • Ainda fora');item.append(makeElement('strong','',student(x.studentId)?.name||'Aluno removido'),makeElement('div','muted',date));exitList.append(item)}if(!occurrences.length)emptyMessage(occurrenceList,'Nenhuma ocorrência neste mês.');for(const x of occurrences){const item=makeElement('div','item occurrence-history-item'),top=makeElement('div','row between'),bottom=makeElement('div','row between'),date=(x.incidentDate?formatLocalDate(x.incidentDate+'T12:00:00'):'')+(x.timestamp?' • Registrada '+formatLocalDateTime(x.timestamp):''),deleteButton=makeElement('button','smallbtn danger','Apagar registro');deleteButton.type='button';deleteButton.dataset.deleteOccurrence=x.id;top.append(makeElement('strong','',student(x.studentId)?.name||'Aluno removido'),makeElement('span','badge',x.category||'Outro'));bottom.append(makeElement('span','muted',date),deleteButton);item.append(top,makeElement('div','',x.notes||''),bottom);occurrenceList.append(item)}}
-async function setAttendance(studentId,status){const classId=$('actionClass').value,day=todayKey(),studentRecord=student(studentId);if(!studentRecord||studentRecord.classId!==classId)return;let row=state.attendance.find(x=>x.classId===classId&&x.studentId===studentId&&x.dateKey===day),previous=row?{...row}:null;if(row){row.status=status;row.timestamp=new Date().toISOString()}else{row={id:uid(),classId,studentId,dateKey:day,status,timestamp:new Date().toISOString()};state.attendance.push(row)}try{await save()}catch(err){if(previous)Object.assign(row,previous);else state.attendance=state.attendance.filter(x=>x.id!==row.id);throw err}renderAttendancePanel();renderAttendanceHistory();renderAnotaHistory();toast(`${studentRecord.name}: ${status==='present'?'presença':'ausência'} registrada.`)}
-async function toggleExit(studentRecord,classId=$('exitClass').value){const open=state.exits.find(x=>x.classId===classId&&x.studentId===studentRecord.id&&!x.returnAt),now=new Date().toISOString(),previousReturn=open?.returnAt;if(open)open.returnAt=now;else state.exits.push({id:uid(),classId,studentId:studentRecord.id,departureAt:now,returnAt:null});const changed=open||state.exits[state.exits.length-1];try{await save()}catch(err){if(open)open.returnAt=previousReturn;else state.exits=state.exits.filter(x=>x!==changed);throw err}renderExitPanel();renderAnotaHistory();toast(open?`${studentRecord.name}: retorno registrado.`:`${studentRecord.name}: saída registrada.`)}
-let actionScanner=null,lastActionToken='',lastActionAt=0,actionScannerPurpose='',visitCameraTimer=null,actionCameraTimer=null;function armCameraTimer(type){if(type==='vista'){clearTimeout(visitCameraTimer);visitCameraTimer=setTimeout(()=>{stopScanner();$('scanMessage').textContent='Câmera fechada após 60 segundos sem leitura.'},60000)}else{clearTimeout(actionCameraTimer);actionCameraTimer=setTimeout(()=>{stopActionScanner();const messageId=actionScannerPurpose==='exit'?'exitMessage':actionScannerPurpose==='occurrence'?'occurrenceMessage':'actionMessage';$(messageId).textContent='Câmera fechada após 60 segundos sem leitura.'},60000)}}async function startActionScanner(purpose='attendance'){const classSelect=purpose==='exit'?'exitClass':purpose==='occurrence'?'occurrenceClass':'actionClass',readerId=purpose==='exit'?'exitReader':purpose==='occurrence'?'occurrenceReader':'actionReader',messageId=purpose==='exit'?'exitMessage':purpose==='occurrence'?'occurrenceMessage':'actionMessage';if(!$(classSelect).value)return toast('Selecione uma turma.');if(!window.Html5Qrcode)return toast('O leitor de QR não carregou. Recarregue o aplicativo e tente novamente.');try{if(actionScanner&&actionScannerPurpose!==purpose){await stopActionScanner();actionScanner=null}if(!actionScanner)actionScanner=new Html5Qrcode(readerId);actionScannerPurpose=purpose;await actionScanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},async decoded=>{armCameraTimer('action');if(actionScanner?.isScanning)actionScanner.pause(true);const token=decoded.trim();if(token===lastActionToken&&Date.now()-lastActionAt<1800){setTimeout(()=>actionScanner?.resume(),500);return}lastActionToken=token;lastActionAt=Date.now();const classId=$(classSelect).value,s=state.students.find(x=>x.classId===classId&&(x.qrToken===token||x.id===token));if(!s){$(messageId).textContent='Este crachá não corresponde a um aluno da turma selecionada.';setTimeout(()=>actionScanner?.resume(),900);return}try{if(purpose==='attendance'){await setAttendance(s.id,'present');$(messageId).textContent=`${s.name}: presença marcada. Leia o próximo crachá.`}else if(purpose==='exit'){await toggleExit(s,classId);$(messageId).textContent=`${s.name}: registro de saída/retorno atualizado.`}else{$('occurrenceStudent').value=s.id;$(messageId).textContent=`${s.name} selecionado. Escolha o tipo e registre a ocorrência.`;renderOccurrences()}}catch(err){$(messageId).textContent=err.message||'Não foi possível salvar o registro.'}if(purpose!=='occurrence')setTimeout(()=>actionScanner?.resume(),700)},()=>{});armCameraTimer('action');$(messageId).textContent='Câmera ativa. Aponte para o QR Code do crachá.'}catch(err){$(messageId).textContent='Não foi possível abrir a câmera. Verifique a permissão do navegador e use o endereço HTTPS.'}}
+(() => {
+  "use strict";
+  const DB = "vistos-historia-v1",
+    STORE = "state",
+    LOCAL_STATE_KEY = "vistai-state-fallback-v1",
+    RESET_MARKER_KEY = "vistai-reset-indexeddb-v1",
+    DEFAULT_DISCIPLINE_ID = "disc-historia-default",
+    SECURE_FORMAT = "vistai-secure-v1",
+    PBKDF2_ITERATIONS = 600000,
+    MIN_PASSWORD_LENGTH = 14,
+    MAX_IMPORT_BYTES = 5 * 1024 * 1024,
+    MAX_BACKUP_BYTES = 20 * 1024 * 1024,
+    MAX_IMPORT_ROWS = 5000;
+  let state = {
+      disciplines: [],
+      classes: [],
+      students: [],
+      visits: [],
+      attendance: [],
+      exits: [],
+      occurrences: [],
+      activeDisciplineId: "",
+      profileName: "",
+      onboardingComplete: false,
+      onboardingStep: "",
+      accessCount: 0,
+      activeProduct: "vista",
+    },
+    scanner = null,
+    currentStudent = null,
+    storageMode = "indexedDB",
+    vaultKey = null,
+    vaultSalt = null,
+    pendingLegacyState = null,
+    gateMode = "setup",
+    activeProduct = "vista",
+    activePanel = "vistaHomePanel",
+    postChooserPanel = "";
+  const $ = (id) => document.getElementById(id),
+    uid = () => {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      const b = crypto.getRandomValues(new Uint8Array(16));
+      b[6] = (b[6] & 15) | 64;
+      b[8] = (b[8] & 63) | 128;
+      return [...b]
+        .map(
+          (x, i) =>
+            `${[4, 6, 8, 10].includes(i) ? "-" : ""}${x.toString(16).padStart(2, "0")}`,
+        )
+        .join("");
+    };
+  function setBrandPalette(product) {
+    document.body.dataset.product = product === "anota" ? "anota" : "vista";
+  }
+  function emptyState() {
+    return {
+      disciplines: [],
+      classes: [],
+      students: [],
+      visits: [],
+      attendance: [],
+      exits: [],
+      occurrences: [],
+      activeDisciplineId: "",
+      profileName: "",
+      onboardingComplete: false,
+      onboardingStep: "",
+      accessCount: 0,
+      activeProduct: "vista",
+    };
+  }
+  function dbOpen() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) return reject(new Error("IndexedDB indisponível"));
+      let settled = false;
+      const r = indexedDB.open(DB, 1);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains(STORE))
+          r.result.createObjectStore(STORE);
+      };
+      r.onsuccess = () => {
+        if (settled) {
+          r.result.close();
+          return;
+        }
+        settled = true;
+        resolve(r.result);
+      };
+      r.onerror = () => {
+        if (!settled) {
+          settled = true;
+          reject(r.error || new Error("Falha ao abrir o banco local"));
+        }
+      };
+      r.onblocked = () => {
+        if (!settled) {
+          settled = true;
+          reject(
+            new Error(
+              "O banco local está ocupado em outra aba. Feche outras abas do Vista Aí e tente novamente.",
+            ),
+          );
+        }
+      };
+    });
+  }
+  function deleteIndexedDatabase() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) return resolve();
+      const r = indexedDB.deleteDatabase(DB);
+      r.onsuccess = resolve;
+      r.onerror = () =>
+        reject(r.error || new Error("Falha ao excluir o banco"));
+      r.onblocked = () =>
+        reject(
+          new Error(
+            "Feche as outras abas do Vista Aí para concluir a limpeza.",
+          ),
+        );
+    });
+  }
+  function readLocalRaw() {
+    const raw = localStorage.getItem(LOCAL_STATE_KEY);
+    return raw ? JSON.parse(raw) : undefined;
+  }
+  function writeLocalRaw(value) {
+    localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(value));
+  }
+  async function readIndexedRaw() {
+    const db = await dbOpen();
+    try {
+      return await new Promise((resolve, reject) => {
+        let tx;
+        try {
+          tx = db.transaction(STORE, "readonly");
+        } catch (err) {
+          reject(err);
+          return;
+        }
+        const r = tx.objectStore(STORE).get("app");
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () =>
+          reject(r.error || new Error("Falha ao ler o banco local"));
+        tx.onabort = () => reject(tx.error || new Error("Leitura cancelada"));
+      });
+    } finally {
+      db.close();
+    }
+  }
+  async function writeIndexedRaw(value) {
+    const db = await dbOpen();
+    try {
+      await new Promise((resolve, reject) => {
+        let tx;
+        try {
+          tx = db.transaction(STORE, "readwrite");
+        } catch (err) {
+          reject(err);
+          return;
+        }
+        tx.objectStore(STORE).put(value, "app");
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error || new Error("Falha ao gravar"));
+        tx.onabort = () => reject(tx.error || new Error("Gravação cancelada"));
+      });
+    } finally {
+      db.close();
+    }
+  }
+  function bytesToBase64(bytes) {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++)
+      binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+  function base64ToBytes(value) {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  }
+  async function deriveVaultKey(
+    password,
+    salt,
+    iterations = PBKDF2_ITERATIONS,
+  ) {
+    const material = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      "PBKDF2",
+      false,
+      ["deriveKey"],
+    );
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+      material,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+  }
+  async function encryptEnvelope(payload, key = vaultKey, salt = vaultSalt) {
+    const iv = crypto.getRandomValues(new Uint8Array(12)),
+      plain = new TextEncoder().encode(JSON.stringify(payload)),
+      cipher = await crypto.subtle.encrypt(
+        {
+          name: "AES-GCM",
+          iv,
+          additionalData: new TextEncoder().encode(SECURE_FORMAT),
+        },
+        key,
+        plain,
+      );
+    return {
+      format: SECURE_FORMAT,
+      version: 1,
+      kdf: "PBKDF2-SHA-256",
+      iterations: PBKDF2_ITERATIONS,
+      salt: bytesToBase64(salt),
+      iv: bytesToBase64(iv),
+      ciphertext: bytesToBase64(new Uint8Array(cipher)),
+    };
+  }
+  async function decryptEnvelope(envelope, password) {
+    if (
+      !envelope ||
+      envelope.format !== SECURE_FORMAT ||
+      !envelope.salt ||
+      !envelope.iv ||
+      !envelope.ciphertext
+    )
+      throw new Error("Arquivo não reconhecido ou sem criptografia Vista Aí.");
+    const iterations = Number(envelope.iterations) || PBKDF2_ITERATIONS;
+    if (iterations < 100000 || iterations > 1000000)
+      throw new Error("Arquivo de backup inválido.");
+    const salt = base64ToBytes(envelope.salt),
+      key = await deriveVaultKey(password, salt, iterations),
+      plain = await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: base64ToBytes(envelope.iv),
+          additionalData: new TextEncoder().encode(SECURE_FORMAT),
+        },
+        key,
+        base64ToBytes(envelope.ciphertext),
+      );
+    return {
+      data: JSON.parse(new TextDecoder().decode(plain)),
+      key,
+      salt,
+      iterations,
+    };
+  }
+  async function save() {
+    if (!vaultKey || !vaultSalt)
+      throw new Error("Desbloqueie o Vista Aí para salvar alterações.");
+    const encrypted = await encryptEnvelope(state);
+    if (storageMode === "localStorage") {
+      try {
+        writeLocalRaw(encrypted);
+        return;
+      } catch (err) {
+        throw new Error(
+          "O armazenamento local alternativo também não conseguiu salvar. Faça um backup e abra o Vista Aí em um navegador atualizado, fora da navegação privada.",
+        );
+      }
+    }
+    try {
+      await writeIndexedRaw(encrypted);
+      storageMode = "indexedDB";
+      try {
+        localStorage.removeItem(LOCAL_STATE_KEY);
+      } catch {}
+    } catch (err) {
+      try {
+        writeLocalRaw(encrypted);
+        storageMode = "localStorage";
+        updateStorageStatus();
+      } catch (fallbackError) {
+        storageMode = "unavailable";
+        updateStorageStatus();
+        throw new Error(
+          "Este navegador não conseguiu salvar os dados. Confira se o armazenamento do site está permitido e não use navegação privada.",
+        );
+      }
+    }
+  }
+  function normalizeState(data) {
+    if (!data || !Array.isArray(data.classes)) return emptyState();
+    const next = {
+      ...emptyState(),
+      disciplines: Array.isArray(data.disciplines) ? data.disciplines : [],
+      classes: data.classes,
+      students: Array.isArray(data.students) ? data.students : [],
+      visits: Array.isArray(data.visits) ? data.visits : [],
+      attendance: Array.isArray(data.attendance) ? data.attendance : [],
+      exits: Array.isArray(data.exits) ? data.exits : [],
+      occurrences: Array.isArray(data.occurrences) ? data.occurrences : [],
+      activeDisciplineId: data.activeDisciplineId || "",
+      profileName: String(data.profileName || "").trim(),
+      onboardingComplete: !!data.onboardingComplete,
+      onboardingStep: data.onboardingStep || "",
+      accessCount: Number(data.accessCount) || 0,
+      activeProduct: data.activeProduct === "anota" ? "anota" : "vista",
+    };
+    if (!next.disciplines.length && next.classes.length)
+      next.disciplines.push({ id: DEFAULT_DISCIPLINE_ID, name: "História" });
+    next.classes.forEach((c) => {
+      if (!c.disciplineId && next.disciplines[0])
+        c.disciplineId = next.disciplines[0].id;
+    });
+    const hasLegacyClass = next.classes.some(
+      (c) => c.disciplineId === DEFAULT_DISCIPLINE_ID,
+    );
+    if (!hasLegacyClass)
+      next.disciplines = next.disciplines.filter(
+        (d) => d.id !== DEFAULT_DISCIPLINE_ID,
+      );
+    next.students.forEach((s) => {
+      s.qrToken = s.qrToken || s.id;
+    });
+    next.activeDisciplineId = next.disciplines.some(
+      (d) => d.id === next.activeDisciplineId,
+    )
+      ? next.activeDisciplineId
+      : next.disciplines[0]?.id || "";
+    return next;
+  }
+  function updateStorageStatus() {
+    let message = "";
+    if (storageMode === "localStorage")
+      message =
+        "Banco principal indisponível; os dados criptografados estão no armazenamento local alternativo. Faça backup regularmente e evite navegação privada.";
+    else if (storageMode === "unavailable")
+      message =
+        "Este navegador bloqueou o armazenamento local. Os dados não podem ser salvos; abra o Vista Aí em um navegador atualizado, fora da navegação privada.";
+    else
+      message =
+        "Dados criptografados no armazenamento do navegador deste aparelho. Isso não substitui um backup externo e não sincroniza automaticamente.";
+    const status = $("storageStatus");
+    if (status) status.textContent = message;
+    const warning = $("storageWarning");
+    if (warning) {
+      warning.textContent = message;
+      warning.classList.toggle("hidden", storageMode === "indexedDB");
+    }
+  }
+  function mergeStates(indexed, fallback) {
+    const merge = (a, b) => {
+      const byId = new Map(
+        (Array.isArray(a) ? a : [])
+          .filter((x) => x && x.id)
+          .map((x) => [x.id, x]),
+      );
+      (Array.isArray(b) ? b : [])
+        .filter((x) => x && x.id)
+        .forEach((x) => byId.set(x.id, x));
+      return [...byId.values()];
+    };
+    const base = fallback || indexed || {};
+    return {
+      ...emptyState(),
+      disciplines: merge(indexed?.disciplines, fallback?.disciplines),
+      classes: merge(indexed?.classes, fallback?.classes),
+      students: merge(indexed?.students, fallback?.students),
+      visits: merge(indexed?.visits, fallback?.visits),
+      attendance: merge(indexed?.attendance, fallback?.attendance),
+      exits: merge(indexed?.exits, fallback?.exits),
+      occurrences: merge(indexed?.occurrences, fallback?.occurrences),
+      activeDisciplineId:
+        fallback?.activeDisciplineId || indexed?.activeDisciplineId || "",
+      profileName: base.profileName || "",
+      onboardingComplete: !!base.onboardingComplete,
+      onboardingStep: base.onboardingStep || "",
+      accessCount: Number(base.accessCount) || 0,
+      activeProduct: base.activeProduct || "vista",
+    };
+  }
+  function configureGate(mode) {
+    gateMode = mode;
+    document.querySelector("main").inert = true;
+    const setup = mode === "setup";
+    $("privacyTitle").textContent = setup
+      ? "Proteja seus dados"
+      : "Desbloqueie o Vista Aí e o Anota Aí";
+    $("privacyDescription").textContent = setup
+      ? "Crie uma senha para criptografar os dados neste aparelho e os arquivos de backup."
+      : "Digite sua senha para abrir os dados criptografados neste navegador.";
+    $("profileNameWrap").classList.toggle("hidden", !setup);
+    $("profileNameInput").required = setup;
+    $("confirmPasswordWrap").classList.toggle("hidden", !setup);
+    $("privacyPassword").autocomplete = setup
+      ? "new-password"
+      : "current-password";
+    $("privacyPassword").minLength = setup ? MIN_PASSWORD_LENGTH : 1;
+    $("privacyPassword").placeholder = setup
+      ? "Use pelo menos 14 caracteres"
+      : "Senha do Vista Aí";
+    $("privacySubmit").textContent = setup
+      ? "Criar perfil e proteger"
+      : "Desbloquear";
+    $("privacyHint").textContent = setup
+      ? "O nome é apenas para exibição neste aparelho. Ele não cria uma conta on-line. A senha não é enviada para a internet. Se esquecê-la, não será possível abrir os dados nem os backups criptografados. Guarde-a em local seguro."
+      : "Os dados permanecem neste aparelho. Se esqueceu a senha, só um backup e a senha correspondente poderão recuperá-los.";
+    $("privacyError").textContent = "";
+    $("privacyGate").classList.remove("hidden");
+    setTimeout(
+      () => (setup ? $("profileNameInput") : $("privacyPassword")).focus(),
+      100,
+    );
+  }
+  async function inspectStoredData() {
+    let fallback,
+      indexed,
+      resetPending = false;
+    try {
+      resetPending = localStorage.getItem(RESET_MARKER_KEY) === "1";
+    } catch {}
+    if (resetPending) {
+      try {
+        await deleteIndexedDatabase();
+        localStorage.removeItem(RESET_MARKER_KEY);
+      } catch {
+        try {
+          fallback = readLocalRaw();
+        } catch {}
+        storageMode = "localStorage";
+        if (fallback?.format === SECURE_FORMAT)
+          return { kind: "encrypted", envelope: fallback };
+        if (fallback) {
+          pendingLegacyState = normalizeState(fallback);
+          return { kind: "legacy" };
+        }
+        pendingLegacyState = emptyState();
+        return { kind: "new" };
+      }
+    }
+    try {
+      fallback = readLocalRaw();
+    } catch {}
+    try {
+      indexed = await readIndexedRaw();
+      storageMode = "indexedDB";
+    } catch {
+      storageMode = fallback ? "localStorage" : "unavailable";
+    }
+    const encrypted = [indexed, fallback].find(
+      (x) => x?.format === SECURE_FORMAT,
+    );
+    if (encrypted) {
+      pendingLegacyState = null;
+      return { kind: "encrypted", envelope: encrypted };
+    }
+    const legacyIndex =
+        indexed && indexed.format !== SECURE_FORMAT ? indexed : undefined,
+      legacyFallback =
+        fallback && fallback.format !== SECURE_FORMAT ? fallback : undefined;
+    if (legacyIndex !== undefined || legacyFallback !== undefined) {
+      pendingLegacyState = normalizeState(
+        legacyIndex !== undefined && legacyFallback !== undefined
+          ? mergeStates(legacyIndex, legacyFallback)
+          : legacyIndex || legacyFallback,
+      );
+      storageMode = legacyIndex !== undefined ? "indexedDB" : "localStorage";
+      return { kind: "legacy" };
+    }
+    storageMode = storageMode === "unavailable" ? "unavailable" : "indexedDB";
+    pendingLegacyState = emptyState();
+    return { kind: "new" };
+  }
+  async function prepareApp() {
+    if (!window.crypto?.subtle) {
+      storageMode = "unavailable";
+      configureGate("setup");
+      $("privacyDescription").textContent =
+        "Este navegador não oferece a proteção criptográfica necessária. Atualize o Safari ou Chrome e abra o Vista Aí pelo endereço HTTPS.";
+      $("privacySubmit").disabled = true;
+      return;
+    }
+    let stored;
+    try {
+      stored = await inspectStoredData();
+    } catch (err) {
+      storageMode = "unavailable";
+      configureGate("setup");
+      $("privacyDescription").textContent =
+        "Não foi possível acessar o armazenamento. Confira se o navegador permite dados do site e tente novamente.";
+      $("privacySubmit").disabled = true;
+      return;
+    }
+    configureGate(stored.kind === "encrypted" ? "unlock" : "setup");
+    if (storageMode === "unavailable" && stored.kind === "new") {
+      $("privacyDescription").textContent =
+        "Este navegador bloqueou o armazenamento local. Abra o Vista Aí em um navegador atualizado, fora da navegação privada.";
+      $("privacySubmit").disabled = true;
+    }
+  }
+  async function completeUnlock(password) {
+    const stored = await inspectStoredData();
+    let savedDuringUpgrade = false;
+    if (stored.kind === "encrypted") {
+      const opened = await decryptEnvelope(stored.envelope, password);
+      state = normalizeState(opened.data);
+      vaultKey = opened.key;
+      vaultSalt = opened.salt;
+      storageMode =
+        storageMode === "localStorage" ? "localStorage" : "indexedDB";
+      if (opened.iterations < PBKDF2_ITERATIONS) {
+        vaultKey = await deriveVaultKey(password, vaultSalt, PBKDF2_ITERATIONS);
+        try {
+          await save();
+          savedDuringUpgrade = true;
+        } catch (err) {
+          state = emptyState();
+          vaultKey = null;
+          vaultSalt = null;
+          throw new Error(
+            "Não foi possível atualizar a proteção do banco local. Os dados antigos continuam no aparelho; tente novamente em um navegador atualizado.",
+          );
+        }
+      }
+    } else {
+      if (password.length < MIN_PASSWORD_LENGTH)
+        throw new Error("Use uma senha com pelo menos 14 caracteres.");
+      if (password !== $("privacyPasswordConfirm").value)
+        throw new Error("As senhas não coincidem.");
+      const profileName = $("profileNameInput").value.trim();
+      if (profileName.length < 2)
+        throw new Error("Digite o nome pelo qual quer ser chamada.");
+      if (storageMode === "unavailable")
+        throw new Error("O armazenamento deste navegador está indisponível.");
+      state = normalizeState(pendingLegacyState || emptyState());
+      state.profileName = profileName;
+      vaultSalt = crypto.getRandomValues(new Uint8Array(16));
+      vaultKey = await deriveVaultKey(password, vaultSalt);
+      if (storageMode !== "localStorage") storageMode = "indexedDB";
+    }
+    if (!savedDuringUpgrade) await save();
+    if (storageMode === "indexedDB") {
+      try {
+        localStorage.removeItem(LOCAL_STATE_KEY);
+        localStorage.removeItem(RESET_MARKER_KEY);
+      } catch {}
+    }
+    $("privacyGate").classList.add("hidden");
+    $("privacyPassword").value = "";
+    $("privacyPasswordConfirm").value = "";
+    $("profileNameInput").value = "";
+    $("privacySubmit").disabled = false;
+    render();
+    updateStorageStatus();
+    if ("serviceWorker" in navigator)
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    await routeAfterUnlock();
+  }
+  let hiddenLockTimer = null,
+    idleLockTimer = null;
+  async function lockApp() {
+    clearTimeout(idleLockTimer);
+    clearTimeout(hiddenLockTimer);
+    await stopScanner();
+    await stopActionScanner();
+    if (secretResolver) finishSecret(null);
+    currentStudent = null;
+    state = emptyState();
+    vaultKey = null;
+    vaultSalt = null;
+    if ($("studentResult")) $("studentResult").classList.add("hidden");
+    if ($("occurrenceNotes")) $("occurrenceNotes").value = "";
+    configureGate("unlock");
+    $("privacyPassword").value = "";
+    $("privacyPasswordConfirm").value = "";
+    render();
+  }
+  function resetIdleLock() {
+    clearTimeout(idleLockTimer);
+    if (vaultKey)
+      idleLockTimer = setTimeout(
+        () => lockApp().catch(() => {}),
+        10 * 60 * 1000,
+      );
+  }
+  ["click", "keydown", "touchstart", "pointerdown"].forEach((name) =>
+    document.addEventListener(name, resetIdleLock, { passive: true }),
+  );
+  let secretResolver = null;
+  function requestFilePassword(title, description) {
+    return new Promise((resolve) => {
+      secretResolver = resolve;
+      document.querySelector("main").inert = true;
+      $("secretTitle").textContent = title;
+      $("secretDescription").textContent = description;
+      $("secretError").textContent = "";
+      $("secretPassword").value = "";
+      $("secretGate").classList.remove("hidden");
+      setTimeout(() => $("secretPassword").focus(), 100);
+    });
+  }
+  function finishSecret(value) {
+    $("secretGate").classList.add("hidden");
+    document.querySelector("main").inert = false;
+    $("secretPassword").value = "";
+    if (secretResolver) {
+      secretResolver(value);
+      secretResolver = null;
+    }
+  }
+  $("secretForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    finishSecret($("secretPassword").value);
+  });
+  $("secretCancel").addEventListener("click", () => finishSecret(null));
+  $("privacyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("privacySubmit").disabled = true;
+    $("privacyError").textContent = "";
+    try {
+      await completeUnlock($("privacyPassword").value);
+    } catch (err) {
+      $("privacyError").textContent =
+        gateMode === "unlock"
+          ? "Senha incorreta ou arquivo de dados danificado. Confira a senha e tente novamente."
+          : err.message || "Não foi possível proteger os dados.";
+      $("privacyPassword").focus();
+    } finally {
+      if (!$("privacyGate").classList.contains("hidden"))
+        $("privacySubmit").disabled = false;
+    }
+  });
+  const NAV_ITEMS = {
+    vista: [
+      ["vistaHomePanel", "Início"],
+      ["scanPanel", "Dar visto"],
+      ["classesPanel", "Turmas e alunos"],
+      ["labelsPanel", "QR Codes"],
+      ["historyPanel", "Histórico"],
+      ["backupPanel", "Backup"],
+      ["howToPanel", "Como Usar"],
+      ["donationsPanel", "Doações"],
+    ],
+    anota: [
+      ["anotaHomePanel", "Início"],
+      ["attendancePanel", "Presença"],
+      ["exitPanel", "Saídas de sala"],
+      ["occurrencesPanel", "Ocorrências"],
+      ["classesPanel", "Turmas e alunos"],
+      ["labelsPanel", "QR Codes"],
+      ["anotaHistoryPanel", "Histórico"],
+      ["backupPanel", "Backup"],
+      ["howToPanel", "Como Usar"],
+      ["donationsPanel", "Doações"],
+    ],
+  };
+  function renderProductNav() {
+    const nav = $("productNav");
+    if (!nav) return;
+    const fragment = document.createDocumentFragment();
+    for (const [id, label] of NAV_ITEMS[activeProduct]) {
+      const button = makeElement(
+        "button",
+        "tab" + (activePanel === id ? " active" : ""),
+        label,
+      );
+      button.type = "button";
+      button.dataset.panel = id;
+      fragment.append(button);
+    }
+    nav.replaceChildren(fragment);
+    $("primaryActions").classList.toggle(
+      "anota-mode",
+      activeProduct === "anota",
+    );
+  }
+  function setPanel(panelId) {
+    activePanel = panelId;
+    document
+      .querySelectorAll(".panel")
+      .forEach((p) => p.classList.toggle("active", p.id === panelId));
+    document
+      .querySelectorAll("#productNav [data-panel]")
+      .forEach((b) =>
+        b.classList.toggle("active", b.dataset.panel === panelId),
+      );
+    renderProductNav();
+  }
+  async function closeAllCameras() {
+    await stopScanner();
+    await stopActionScanner();
+  }
+  async function showPanel(panelId) {
+    await closeAllCameras();
+    setPanel(panelId);
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function showProductChooser() {
+    document.querySelector("main").inert = true;
+    $("onboardingGate").classList.add("hidden");
+    $("supportReminder").classList.add("hidden");
+    $("productChooser").classList.remove("hidden");
+  }
+  async function openProduct(product) {
+    activeProduct = product === "anota" ? "anota" : "vista";
+    state.activeProduct = activeProduct;
+    setBrandPalette(activeProduct);
+    $("productChooser").classList.add("hidden");
+    $("supportReminder").classList.add("hidden");
+    $("onboardingGate").classList.add("hidden");
+    document.querySelector("main").inert = false;
+    renderProductNav();
+    const panel =
+      postChooserPanel ||
+      (activeProduct === "anota" ? "anotaHomePanel" : "vistaHomePanel");
+    postChooserPanel = "";
+    await closeAllCameras();
+    setPanel(panel);
+    render();
+    try {
+      await save();
+    } catch (err) {
+      toast(err.message || "Não foi possível salvar esta preferência.");
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function renderOnboarding(step) {
+    state.onboardingStep = step;
+    const content = $("onboardingContent"),
+      progressText =
+        step === "profile"
+          ? "Configuração inicial • Perfil"
+          : step === "discipline"
+            ? "Configuração inicial • Disciplina"
+            : step === "intro"
+              ? "Conheça o projeto"
+              : "Configuração inicial • Apoio opcional",
+      fragment = document.createDocumentFragment(),
+      progress = makeElement("div", "flow-progress", progressText);
+    fragment.append(progress);
+    const heading = (text) => {
+        const node = makeElement("h1", "", text);
+        node.id = "onboardingTitle";
+        fragment.append(node);
+        return node;
+      },
+      paragraph = (text, className = "") =>
+        fragment.append(makeElement("p", className, text)),
+      action = (label, value, className = "primary") => {
+        const button = makeElement("button", className, label);
+        button.type = "button";
+        button.dataset.onboarding = value;
+        return button;
+      };
+    if (step === "profile") {
+      heading("Como podemos chamar você?");
+      paragraph(
+        "Este nome aparece neste aparelho. O Vista Aí não cria uma conta na internet.",
+      );
+      const label = makeElement("label", "", "Nome de exibição");
+      label.htmlFor = "onboardingProfileName";
+      const input = makeElement("input");
+      input.id = "onboardingProfileName";
+      input.maxLength = 60;
+      input.placeholder = "Ex.: Professora Ana";
+      input.value = state.profileName || "";
+      input.autocomplete = "nickname";
+      fragment.append(label, input);
+      const actions = makeElement("div", "flow-actions");
+      actions.append(action("Continuar", "save-profile"));
+      fragment.append(actions);
+    } else if (step === "discipline") {
+      heading("Cadastre sua primeira disciplina");
+      paragraph(
+        "As turmas, os alunos e os registros ficam separados por disciplina. Você poderá cadastrar outras agora ou depois.",
+      );
+      const row = makeElement("div", "row form-row"),
+        input = makeElement("input", "grow");
+      input.id = "firstDisciplineName";
+      input.placeholder = "Ex.: História";
+      row.append(input, action("Adicionar disciplina", "add-discipline"));
+      fragment.append(row);
+      const badges = makeElement("div", "row");
+      badges.classList.add("mt-12");
+      if (state.disciplines.length) {
+        for (const discipline of state.disciplines)
+          badges.append(makeElement("span", "badge", discipline.name));
+      } else
+        badges.append(
+          makeElement("span", "muted", "Nenhuma disciplina adicionada ainda."),
+        );
+      fragment.append(badges);
+      const actions = makeElement("div", "flow-actions"),
+        next = action("Continuar", "continue-intro");
+      next.disabled = !state.disciplines.length;
+      actions.append(next);
+      fragment.append(actions);
+    } else if (step === "intro") {
+      heading("Dois espaços para organizar sua rotina");
+      const choices = makeElement("div", "product-choices intro-choices");
+      for (const item of [
+        {
+          name: "Vista Aí",
+          src: "assets/logo-vistaai.webp",
+          description: "Vistos das atividades, notas e histórico por turma.",
+          className: "product-choice",
+        },
+        {
+          name: "Anota Aí",
+          src: "assets/logo-anotaai.webp",
+          description: "Chamada, saídas de sala e ocorrências.",
+          className: "product-choice anota-choice",
+        },
+      ]) {
+        const card = makeElement("article", item.className),
+          image = makeElement("img");
+        image.src = item.src;
+        image.alt = "Mascote " + item.name;
+        card.append(
+          image,
+          makeElement("strong", "", item.name),
+          makeElement("span", "", item.description),
+        );
+        choices.append(card);
+      }
+      fragment.append(choices);
+      paragraph(
+        "As duas áreas usam as mesmas turmas e o mesmo QR do crachá. Os dados ficam criptografados neste aparelho.",
+      );
+      const actions = makeElement("div", "flow-actions");
+      actions.append(action("Continuar", "continue-support"));
+      fragment.append(actions);
+    } else {
+      heading("O projeto é gratuito para usar");
+      paragraph(
+        "Uma contribuição é opcional e ajuda a manter o domínio e preparar melhorias. Você pode apoiar por Pix, contribuir uma vez ou escolher apoio mensal. A doação não libera funções: as ferramentas continuam gratuitas.",
+      );
+      const grid = makeElement("div", "donation-grid"),
+        pix = makeElement("div", "donation-option"),
+        pixTitle = makeElement("h3", "", "Pix"),
+        image = makeElement("img", "pix-qr");
+      image.src = "assets/pix-vistaai.jpeg";
+      image.alt = "QR Code Pix para contribuição";
+      const copy = makeElement("button", "tab", "Copiar código Pix");
+      copy.id = "copyPixCodeOnboarding";
+      copy.type = "button";
+      pix.append(pixTitle, image, copy);
+      const links = makeElement("div", "donation-option");
+      links.append(makeElement("h3", "", "Contribuição avulsa"));
+      const once = makeElement(
+        "a",
+        "tab primary donation-link",
+        "Apoiar uma vez",
+      );
+      once.href = "https://mpago.la/2qUapT1";
+      once.target = "_blank";
+      once.rel = "noopener noreferrer";
+      const recurringTitle = makeElement("h3", "", "Apoio mensal");
+      recurringTitle.classList.add("mt-16");
+      const recurring = makeElement(
+        "a",
+        "tab donation-link",
+        "Apoiar mensalmente",
+      );
+      recurring.href = "https://mpago.la/23pEhPy";
+      recurring.target = "_blank";
+      recurring.rel = "noopener noreferrer";
+      links.append(once, recurringTitle, recurring);
+      grid.append(pix, links);
+      fragment.append(grid);
+      paragraph(
+        "Não quer contribuir? Sem problema. Basta continuar. O uso é gratuito.",
+        "donation-note",
+      );
+      const actions = makeElement("div", "flow-actions");
+      actions.append(
+        action("Agora não", "finish", "tab"),
+        action("Continuar gratuitamente", "finish", "primary"),
+      );
+      fragment.append(actions);
+    }
+    content.replaceChildren(fragment);
+    document.querySelector("main").inert = true;
+    $("onboardingGate").classList.remove("hidden");
+    $("productChooser").classList.add("hidden");
+    $("supportReminder").classList.add("hidden");
+    if (step === "profile")
+      setTimeout(() => $("onboardingProfileName")?.focus(), 50);
+    if (step === "discipline")
+      setTimeout(() => $("firstDisciplineName")?.focus(), 50);
+  }
+  function showOnboarding(step) {
+    renderOnboarding(step);
+  }
+  async function routeAfterUnlock() {
+    state.accessCount = (Number(state.accessCount) || 0) + 1;
+    await save();
+    render();
+    updateStorageStatus();
+    if (!state.profileName) {
+      showOnboarding("profile");
+      return;
+    }
+    if (!state.onboardingComplete) {
+      showOnboarding(state.disciplines.length ? "intro" : "discipline");
+      return;
+    }
+    if (state.accessCount % 10 === 0) {
+      document.querySelector("main").inert = true;
+      $("supportReminder").classList.remove("hidden");
+      $("productChooser").classList.add("hidden");
+      return;
+    }
+    showProductChooser();
+  }
+  async function advanceOnboarding(action) {
+    if (action === "save-profile") {
+      const value = $("onboardingProfileName").value.trim();
+      if (value.length < 2)
+        return toast("Digite um nome com pelo menos 2 caracteres.");
+      state.profileName = value;
+      state.onboardingStep = state.disciplines.length ? "intro" : "discipline";
+      await save();
+      renderOnboarding(state.onboardingStep);
+      return;
+    }
+    if (action === "add-discipline") {
+      const name = $("firstDisciplineName").value.trim();
+      if (!name) return toast("Digite o nome da disciplina.");
+      if (
+        state.disciplines.some(
+          (d) =>
+            d.name.toLocaleLowerCase("pt-BR") ===
+            name.toLocaleLowerCase("pt-BR"),
+        )
+      )
+        return toast("Essa disciplina já está cadastrada.");
+      const d = { id: uid(), name };
+      state.disciplines.push(d);
+      state.activeDisciplineId = d.id;
+      await save();
+      render();
+      renderOnboarding("discipline");
+      return;
+    }
+    if (action === "add-another") {
+      const input = $("firstDisciplineName");
+      if (input) {
+        input.focus();
+        if (!input.value.trim())
+          return toast(
+            "Digite uma disciplina e toque em Adicionar disciplina.",
+          );
+      }
+      return;
+    }
+    if (action === "continue-intro") {
+      if (!state.disciplines.length)
+        return toast("Cadastre pelo menos uma disciplina.");
+      state.onboardingStep = "intro";
+      await save();
+      renderOnboarding("intro");
+      return;
+    }
+    if (action === "continue-support") {
+      state.onboardingStep = "support";
+      await save();
+      renderOnboarding("support");
+      return;
+    }
+    if (action === "finish") {
+      state.onboardingComplete = true;
+      state.onboardingStep = "";
+      await save();
+      $("onboardingGate").classList.add("hidden");
+      showProductChooser();
+    }
+  }
+  async function finishReminder(action) {
+    $("supportReminder").classList.add("hidden");
+    if (action === "donations") {
+      postChooserPanel = "donationsPanel";
+    }
+    showProductChooser();
+  }
+  function toast(msg) {
+    $("toast").textContent = msg;
+    $("toast").classList.remove("hidden");
+    setTimeout(() => $("toast").classList.add("hidden"), 2800);
+  }
+  async function copyPixCode() {
+    const field = $("pixCode");
+    if (!field) return;
+    try {
+      await navigator.clipboard.writeText(field.value);
+      toast("Código Pix copiado.");
+    } catch {
+      field.focus();
+      field.select();
+      field.setSelectionRange(0, field.value.length);
+      const copied = document.execCommand("copy");
+      toast(
+        copied ? "Código Pix copiado." : "Selecione o código Pix e use Copiar.",
+      );
+    }
+  }
+  $("copyPixCode")?.addEventListener("click", copyPixCode);
+  function makeElement(tag, className = "", text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = String(text);
+    return element;
+  }
+  function emptyMessage(target, text) {
+    target.replaceChildren(makeElement("p", "muted", text));
+  }
+  function formatLocalDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? "Data inválida"
+      : date.toLocaleDateString("pt-BR");
+  }
+  function formatLocalDateTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? "Data inválida"
+      : date.toLocaleString("pt-BR");
+  }
+  function cls(id) {
+    return state.classes.find((c) => c.id === id);
+  }
+  function student(id) {
+    return state.students.find((s) => s.id === id);
+  }
+  function qrTokenForRegistration() {
+    return uid();
+  }
+  function qrTokenForManual(registration, name, classId) {
+    const key = String(registration || "")
+        .trim()
+        .toLocaleLowerCase("pt-BR"),
+      normalized = normalizeHeader(name),
+      matches = state.students.filter(
+        (s) =>
+          s.classId !== classId &&
+          (key
+            ? String(s.registration || "")
+                .trim()
+                .toLocaleLowerCase("pt-BR") === key
+            : normalizeHeader(s.name) === normalized),
+      ),
+      shared = [...new Set(matches.map((s) => String(s.qrToken || s.id)))];
+    if (
+      matches.length === 1 &&
+      shared.length === 1 &&
+      confirm(
+        `Já existe “${matches[0].name}” em outra turma. É o mesmo aluno e você quer usar o mesmo QR do crachá?`,
+      )
+    )
+      return shared[0];
+    if (matches.length > 1)
+      toast(
+        key
+          ? "Há vários alunos com essa matrícula. O QR será individual; use Unificar QR após conferir os cadastros."
+          : "Há vários alunos com esse nome. O QR será individual; use Unificar QR após conferir os cadastros.",
+      );
+    return uid();
+  }
+  function qrLinkCandidate(s) {
+    const matches = state.students.filter(
+        (x) =>
+          x.id !== s.id &&
+          x.classId !== s.classId &&
+          normalizeHeader(x.name) === normalizeHeader(s.name) &&
+          String(x.qrToken || x.id) !== String(s.qrToken || s.id),
+      ),
+      tokens = [...new Set(matches.map((x) => String(x.qrToken || x.id)))];
+    return matches.length && tokens.length === 1
+      ? matches[0]
+      : matches.length === 1
+        ? matches[0]
+        : null;
+  }
+  function score(mode, c, studentId) {
+    const visits = state.visits.filter(
+      (v) => v.classId === c.id && v.studentId === studentId,
+    );
+    const sum = visits.reduce((a, v) => a + v.value, 0);
+    if (mode === "average") return visits.length ? sum / visits.length : 0;
+    if (mode === "scaled")
+      return visits.length
+        ? (sum / visits.length) * (Number(c.maxGrade) || 10)
+        : 0;
+    return sum;
+  }
+  function classesForActive() {
+    return state.classes.filter(
+      (c) => c.disciplineId === state.activeDisciplineId,
+    );
+  }
+  function selectOptions(el, choices = classesForActive()) {
+    const old = el.value,
+      fragment = document.createDocumentFragment(),
+      placeholder = makeElement(
+        "option",
+        "",
+        choices.length ? "Selecione uma turma" : "Nenhuma turma cadastrada",
+      );
+    placeholder.value = "";
+    fragment.append(placeholder);
+    for (const item of choices) {
+      const option = makeElement("option", "", item.name);
+      option.value = item.id;
+      fragment.append(option);
+    }
+    el.replaceChildren(fragment);
+    el.value = choices.some((item) => item.id === old) ? old : "";
+    el.disabled = !choices.length;
+  }
+  function render() {
+    const openClassIds = new Set(
+        [...document.querySelectorAll("details.class-accordion[open]")].map(
+          (node) => node.dataset.classAccordion,
+        ),
+      ),
+      active =
+        state.disciplines.find(
+          (item) => item.id === state.activeDisciplineId,
+        ) ||
+        state.disciplines[0] ||
+        null;
+    state.activeDisciplineId = active?.id || "";
+    const disciplineSelect = $("activeDiscipline"),
+      disciplineOptions = document.createDocumentFragment(),
+      disciplinePlaceholder = makeElement(
+        "option",
+        "",
+        state.disciplines.length
+          ? "Selecione uma disciplina"
+          : "Nenhuma disciplina cadastrada",
+      );
+    disciplinePlaceholder.value = "";
+    disciplineOptions.append(disciplinePlaceholder);
+    for (const discipline of state.disciplines) {
+      const option = makeElement("option", "", discipline.name);
+      option.value = discipline.id;
+      disciplineOptions.append(option);
+    }
+    disciplineSelect.replaceChildren(disciplineOptions);
+    disciplineSelect.value = state.activeDisciplineId;
+    disciplineSelect.disabled = !state.disciplines.length;
+    $("classDisciplineLabel").textContent =
+      active?.name || "nenhuma disciplina selecionada";
+    $("addClass").disabled = !active;
+    const disciplinesList = $("disciplineList"),
+      disciplineBadges = document.createDocumentFragment();
+    for (const discipline of state.disciplines)
+      disciplineBadges.append(makeElement("span", "badge", discipline.name));
+    disciplinesList.replaceChildren(disciplineBadges);
+    const visible = classesForActive();
+    for (const id of [
+      "scanClass",
+      "importClass",
+      "historyClass",
+      "labelsClass",
+      "actionClass",
+      "exitClass",
+      "occurrenceClass",
+      "attendanceHistoryClass",
+      "anotaHistoryClass",
+    ])
+      selectOptions($(id), visible);
+    const home = document.createDocumentFragment(),
+      anotaHome = document.createDocumentFragment(),
+      classCards = document.createDocumentFragment();
+    for (const classRecord of visible) {
+      const students = state.students
+          .filter((item) => item.classId === classRecord.id)
+          .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+        studentCount = students.length,
+        visitCount = state.visits.filter(
+          (item) => item.classId === classRecord.id,
+        ).length,
+        attendanceCount = state.attendance.filter(
+          (item) => item.classId === classRecord.id,
+        ).length;
+      const homeDetails = makeElement("details", "item class-home-accordion"),
+        homeSummary = makeElement("summary"),
+        homeTitle = makeElement("strong", "", classRecord.name),
+        homeMeta = makeElement(
+          "span",
+          "muted",
+          studentCount + " alunos • " + visitCount + " vistos",
+        ),
+        homeText = makeElement("span");
+      homeText.append(homeTitle, homeMeta);
+      homeSummary.append(homeText);
+      const homeActions = makeElement("div", "row between class-home-actions"),
+        homeHint = makeElement(
+          "span",
+          "muted",
+          "Abra o histórico para consultar os resultados.",
+        ),
+        historyButton = makeElement("button", "smallbtn", "Ver resultados");
+      historyButton.type = "button";
+      historyButton.dataset.go = "historyPanel";
+      historyButton.dataset.class = classRecord.id;
+      homeActions.append(homeHint, historyButton);
+      homeDetails.append(homeSummary, homeActions);
+      home.append(homeDetails);
+      const anotaDetails = makeElement("details", "item"),
+        anotaSummary = makeElement("summary"),
+        anotaTitle = makeElement("strong", "", classRecord.name),
+        anotaMeta = makeElement(
+          "span",
+          "muted",
+          studentCount +
+            " alunos • " +
+            attendanceCount +
+            " registros de chamada",
+        );
+      anotaSummary.append(anotaTitle, anotaMeta);
+      anotaDetails.append(anotaSummary);
+      anotaHome.append(anotaDetails);
+      const card = makeElement("details", "card class-accordion");
+      card.dataset.classAccordion = classRecord.id;
+      card.open = openClassIds.has(classRecord.id);
+      const summary = makeElement("summary"),
+        summaryText = makeElement("span", "", classRecord.name + " "),
+        countBadge = makeElement("span", "badge", studentCount + " aluno(s)");
+      summaryText.append(countBadge);
+      summary.append(summaryText);
+      const body = makeElement("div", "class-accordion-body"),
+        entry = makeElement("div", "row student-entry"),
+        nameInput = makeElement("input", "grow"),
+        registrationInput = makeElement("input", "grow"),
+        addButton = makeElement("button", "smallbtn primary", "Adicionar");
+      nameInput.placeholder = "Nome do aluno";
+      nameInput.setAttribute(
+        "aria-label",
+        "Nome do aluno da turma " + classRecord.name,
+      );
+      nameInput.dataset.newstudent = "";
+      registrationInput.placeholder = "Matrícula (opcional)";
+      registrationInput.setAttribute(
+        "aria-label",
+        "Matrícula opcional do aluno",
+      );
+      registrationInput.dataset.reg = "";
+      addButton.type = "button";
+      addButton.dataset.addstudent = classRecord.id;
+      entry.append(nameInput, registrationInput, addButton);
+      const studentList = makeElement("div", "list");
+      studentList.classList.add("mt-10");
+      if (!students.length)
+        studentList.append(
+          makeElement("p", "muted", "Nenhum aluno cadastrado nesta turma."),
+        );
+      for (const person of students) {
+        const item = makeElement("div", "item row between"),
+          identity = makeElement("span");
+        identity.append(document.createTextNode(person.name));
+        if (person.registration)
+          identity.append(
+            makeElement("span", "muted", " • " + person.registration),
+          );
+        item.append(identity);
+        if (qrLinkCandidate(person)) {
+          const shareButton = makeElement("button", "smallbtn", "Unificar QR");
+          shareButton.type = "button";
+          shareButton.dataset.shareQr = person.id;
+          item.append(shareButton);
+        }
+        const removeButton = makeElement(
+          "button",
+          "smallbtn danger",
+          "Remover",
+        );
+        removeButton.type = "button";
+        removeButton.dataset.delstudent = person.id;
+        item.append(removeButton);
+        studentList.append(item);
+      }
+      body.append(entry, studentList);
+      card.append(summary, body);
+      classCards.append(card);
+    }
+    if (visible.length) {
+      $("homeClasses").replaceChildren(home);
+      $("anotaHomeClasses").replaceChildren(anotaHome);
+      $("classesList").replaceChildren(classCards);
+    } else {
+      emptyMessage(
+        $("homeClasses"),
+        state.disciplines.length
+          ? "Nenhuma turma cadastrada nesta disciplina."
+          : "Cadastre uma disciplina em “Turmas e alunos” para começar.",
+      );
+      emptyMessage(
+        $("anotaHomeClasses"),
+        "Nenhuma turma cadastrada nesta disciplina.",
+      );
+      emptyMessage(
+        $("classesList"),
+        state.disciplines.length
+          ? "Crie uma turma nesta disciplina para começar."
+          : "Cadastre uma disciplina para criar sua primeira turma.",
+      );
+    }
+    renderProductNav();
+    renderHistory();
+    renderLabels();
+    renderAttendancePanel();
+    renderExitPanel();
+    renderOccurrences();
+    renderAttendanceHistory();
+    renderAnotaHistory();
+    $("maxGradeWrap").classList.toggle(
+      "hidden",
+      $("gradeMode").value !== "scaled",
+    );
+  }
+  function renderHistory() {
+    const id = $("historyClass").value,
+      c = cls(id);
+    if (!c) {
+      emptyMessage($("gradeSummary"), "Cadastre uma turma primeiro.");
+      $("historyList").replaceChildren();
+      $("gradeAccordion").querySelector("summary").textContent =
+        "Resultados por aluno";
+      $("historyAccordion").querySelector("summary").textContent =
+        "Vistos registrados";
+      return;
+    }
+    const mode = c.gradeMode || "sum";
+    $("gradeMode").value = mode;
+    $("maxGrade").value = c.maxGrade || 10;
+    $("maxGradeWrap").classList.toggle("hidden", mode !== "scaled");
+    const people = state.students
+      .filter((s) => s.classId === id)
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    $("gradeAccordion").querySelector("summary").textContent =
+      "Resultados por aluno (" + people.length + ")";
+    const summary = $("gradeSummary");
+    summary.replaceChildren();
+    if (!people.length) emptyMessage(summary, "Nenhum aluno nesta turma.");
+    for (const s of people) {
+      const row = makeElement("div", "item row between"),
+        info = makeElement("div"),
+        name = makeElement("strong", "", s.name),
+        count = state.visits.filter(
+          (v) => v.classId === id && v.studentId === s.id,
+        ).length,
+        visits = makeElement("div", "muted", count + " vistos"),
+        grade = score(mode, c, s.id),
+        gradeText =
+          grade.toLocaleString("pt-BR", { maximumFractionDigits: 2 }) +
+          (mode === "scaled"
+            ? " / " + (Number(c.maxGrade) || 10)
+            : mode === "average"
+              ? " / 1"
+              : "");
+      info.append(name, visits);
+      row.append(info, makeElement("strong", "", gradeText));
+      summary.append(row);
+    }
+    const rows = state.visits
+      .filter((v) => v.classId === id)
+      .sort((a, b) =>
+        String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
+      );
+    $("historyAccordion").querySelector("summary").textContent =
+      "Vistos registrados (" + rows.length + ")";
+    const list = $("historyList");
+    list.replaceChildren();
+    if (!rows.length) emptyMessage(list, "Nenhum visto registrado.");
+    for (const v of rows) {
+      const item = makeElement("div", "item"),
+        head = makeElement("div", "row between"),
+        who = makeElement(
+          "strong",
+          "",
+          student(v.studentId)?.name || "Aluno removido",
+        ),
+        badge = makeElement(
+          "span",
+          "badge",
+          (v.statusLabel || "Situação") +
+            " · " +
+            Number(v.value || 0).toLocaleString("pt-BR"),
+        ),
+        activity = makeElement("div", "", v.activity || ""),
+        date = makeElement("div", "muted", formatLocalDateTime(v.timestamp));
+      head.append(who, badge);
+      item.append(head, activity, date);
+      list.append(item);
+    }
+  }
+  function renderLabels() {
+    const id = $("labelsClass").value,
+      selectedClass = cls(id),
+      students = state.students
+        .filter((s) => s.classId === id)
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+      discipline = state.disciplines.find(
+        (d) => d.id === selectedClass?.disciplineId,
+      ),
+      grid = $("labelsGrid");
+    grid.replaceChildren();
+    for (const s of students) {
+      const label = makeElement("div", "qr-label");
+      label.append(
+        makeElement("strong", "", s.name),
+        makeElement(
+          "span",
+          "",
+          (discipline?.name || "") + " • " + (selectedClass?.name || ""),
+        ),
+      );
+      const target = makeElement("div");
+      target.id = "qr-" + s.id;
+      label.append(target);
+      grid.append(label);
+    }
+    if (window.QRCode)
+      students.forEach(
+        (s) =>
+          new QRCode($("qr-" + s.id), {
+            text: String(s.qrToken || s.id),
+            width: 112,
+            height: 112,
+            correctLevel: QRCode.CorrectLevel.M,
+          }),
+      );
+  }
+  function todayKey() {
+    return $("actionDate").value || localDateKey();
+  }
+  function renderAttendancePanel() {
+    const classId = $("actionClass").value,
+      c = cls(classId),
+      students = state.students
+        .filter((s) => s.classId === classId)
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+      day = todayKey(),
+      roster = $("attendanceRoster");
+    if (!c) {
+      emptyMessage(roster, "Cadastre e selecione uma turma primeiro.");
+      $("attendanceSummary").textContent = "";
+      $("attendanceRosterSummary").textContent = "Mostrar lista de alunos";
+      return;
+    }
+    const todays = state.attendance.filter(
+        (x) => x.classId === classId && x.dateKey === day,
+      ),
+      byStudent = new Map(todays.map((x) => [x.studentId, x.status])),
+      present = todays.filter((x) => x.status === "present").length,
+      absent = todays.filter((x) => x.status === "absent").length;
+    $("attendanceSummary").textContent =
+      present +
+      " presente(s) • " +
+      absent +
+      " ausente(s) • " +
+      Math.max(0, students.length - present - absent) +
+      " sem marcação";
+    $("attendanceRosterSummary").textContent =
+      "Mostrar lista de alunos (" + students.length + ")";
+    roster.replaceChildren();
+    if (!students.length) emptyMessage(roster, "Nenhum aluno nesta turma.");
+    for (const s of students) {
+      const status = byStudent.get(s.id),
+        item = makeElement("div", "item presence-row"),
+        nameWrap = makeElement("span"),
+        name = makeElement("strong", "", s.name),
+        statusText = makeElement(
+          "span",
+          "muted",
+          status
+            ? " • " + (status === "present" ? "Presente" : "Ausente")
+            : " • Sem marcação",
+        ),
+        actions = makeElement("div", "presence-actions"),
+        presentButton = makeElement("button", "present-btn", "Presente"),
+        absentButton = makeElement("button", "absent-btn", "Ausente");
+      presentButton.type = "button";
+      presentButton.dataset.markPresence = s.id;
+      presentButton.dataset.presenceStatus = "present";
+      absentButton.type = "button";
+      absentButton.dataset.markPresence = s.id;
+      absentButton.dataset.presenceStatus = "absent";
+      nameWrap.append(name, statusText);
+      actions.append(presentButton, absentButton);
+      item.append(nameWrap, actions);
+      roster.append(item);
+    }
+  }
+  function renderExitSummary(classId, students) {
+    const details = makeElement("details", "accordion-block"),
+      summary = makeElement(
+        "summary",
+        "",
+        "Mostrar resumo dos alunos (" + students.length + ")",
+      ),
+      list = makeElement("div", "list accordion-content");
+    for (const s of students) {
+      const trips = state.exits.filter(
+          (x) => x.classId === classId && x.studentId === s.id,
+        ),
+        minutes = trips.reduce(
+          (total, x) =>
+            total +
+            (x.returnAt
+              ? Math.max(
+                  0,
+                  Math.round(
+                    (Date.parse(x.returnAt) - Date.parse(x.departureAt)) /
+                      60000,
+                  ),
+                )
+              : 0),
+          0,
+        ),
+        open = trips.filter((x) => !x.returnAt).length,
+        row = makeElement("div", "item row between");
+      row.append(
+        makeElement("strong", "", s.name),
+        makeElement(
+          "span",
+          "muted",
+          trips.length +
+            " saída(s) • " +
+            minutes +
+            " min fora" +
+            (open ? " • fora agora" : ""),
+        ),
+      );
+      list.append(row);
+    }
+    if (!students.length) emptyMessage(list, "Nenhum aluno nesta turma.");
+    details.append(summary, list);
+    $("exitSummary").replaceChildren(details);
+  }
+  function renderExitPanel() {
+    const classId = $("exitClass").value,
+      c = cls(classId),
+      students = state.students
+        .filter((s) => s.classId === classId)
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+      history = $("exitHistory");
+    if (!c) {
+      history.replaceChildren();
+      emptyMessage(
+        $("exitSummary"),
+        "Cadastre e selecione uma turma primeiro.",
+      );
+      return;
+    }
+    renderExitSummary(classId, students);
+    const trips = state.exits
+      .filter((x) => x.classId === classId)
+      .sort((a, b) =>
+        String(b.departureAt || "").localeCompare(String(a.departureAt || "")),
+      )
+      .slice(0, 60);
+    history.replaceChildren();
+    if (!trips.length)
+      emptyMessage(history, "Nenhuma saída registrada nesta turma.");
+    for (const x of trips) {
+      const duration = x.returnAt
+          ? Math.max(
+              0,
+              Math.round(
+                (Date.parse(x.returnAt) - Date.parse(x.departureAt)) / 60000,
+              ),
+            )
+          : null,
+        item = makeElement("div", "item"),
+        dateText =
+          "Saiu: " +
+          formatLocalDateTime(x.departureAt) +
+          (x.returnAt
+            ? " • Retornou: " +
+              formatLocalDateTime(x.returnAt) +
+              " • Fora por " +
+              duration +
+              " min"
+            : " • Ainda fora");
+      item.append(
+        makeElement(
+          "strong",
+          "",
+          student(x.studentId)?.name || "Aluno removido",
+        ),
+        makeElement("div", "muted", dateText),
+      );
+      history.append(item);
+    }
+  }
+  function renderOccurrences() {
+    const classId = $("occurrenceClass").value,
+      oldStudent = $("occurrenceStudent").value,
+      people = state.students
+        .filter((s) => s.classId === classId)
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+      select = $("occurrenceStudent");
+    select.replaceChildren();
+    const placeholder = makeElement(
+      "option",
+      "",
+      people.length ? "Selecione um aluno" : "Nenhum aluno nesta turma",
+    );
+    placeholder.value = "";
+    select.append(placeholder);
+    for (const s of people) {
+      const option = makeElement("option", "", s.name);
+      option.value = s.id;
+      select.append(option);
+    }
+    select.value = people.some((s) => s.id === oldStudent) ? oldStudent : "";
+    const rows = state.occurrences
+      .filter((x) => x.classId === classId)
+      .sort((a, b) =>
+        String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
+      )
+      .slice(0, 100);
+    $("occurrenceHistorySummary").textContent =
+      "Registros recentes (" + rows.length + ")";
+    const history = $("occurrenceHistory");
+    history.replaceChildren();
+    if (!rows.length)
+      emptyMessage(history, "Nenhuma ocorrência registrada nesta turma.");
+    for (const x of rows) {
+      const item = makeElement("div", "item occurrence-history-item"),
+        top = makeElement("div", "row between"),
+        middle = makeElement("div", "", x.notes || ""),
+        bottom = makeElement("div", "row between"),
+        date =
+          formatLocalDateTime(x.timestamp) +
+          (x.incidentDate
+            ? " • Data: " + formatLocalDate(x.incidentDate + "T12:00:00")
+            : ""),
+        deleteButton = makeElement(
+          "button",
+          "smallbtn danger",
+          "Apagar registro",
+        );
+      deleteButton.type = "button";
+      deleteButton.dataset.deleteOccurrence = x.id;
+      top.append(
+        makeElement(
+          "strong",
+          "",
+          student(x.studentId)?.name || "Aluno removido",
+        ),
+        makeElement("span", "badge", x.category || "Outro"),
+      );
+      bottom.append(makeElement("span", "muted", date), deleteButton);
+      item.append(top, middle, bottom);
+      history.append(item);
+    }
+  }
+  function renderAttendanceHistory() {
+    const classId = $("attendanceHistoryClass").value,
+      month = $("attendanceHistoryMonth").value,
+      summary = $("attendanceHistorySummary"),
+      list = $("attendanceHistoryList");
+    if (!classId || !month) {
+      summary.textContent = "Selecione uma turma e um mês.";
+      list.replaceChildren();
+      return;
+    }
+    const records = state.attendance
+        .filter(
+          (x) =>
+            x.classId === classId && String(x.dateKey || "").startsWith(month),
+        )
+        .sort(
+          (a, b) =>
+            String(b.dateKey || "").localeCompare(String(a.dateKey || "")) ||
+            String(a.timestamp || "").localeCompare(String(b.timestamp || "")),
+        ),
+      days = [...new Set(records.map((x) => x.dateKey))].sort((a, b) =>
+        b.localeCompare(a),
+      );
+    summary.textContent =
+      days.length + " chamada(s) • " + records.length + " marcação(ões) no mês";
+    list.replaceChildren();
+    if (!days.length)
+      emptyMessage(list, "Nenhuma chamada encontrada neste mês.");
+    for (const day of days) {
+      const rows = records.filter((x) => x.dateKey === day),
+        present = rows.filter((x) => x.status === "present").length,
+        absent = rows.filter((x) => x.status === "absent").length,
+        details = makeElement("details", "accordion-block"),
+        heading = makeElement(
+          "summary",
+          "",
+          formatLocalDate(day + "T12:00:00") +
+            " • " +
+            present +
+            " presente(s) • " +
+            absent +
+            " ausente(s)",
+        ),
+        body = makeElement("div", "list accordion-content");
+      for (const x of rows) {
+        const row = makeElement("div", "item row between");
+        row.append(
+          makeElement(
+            "span",
+            "",
+            student(x.studentId)?.name || "Aluno removido",
+          ),
+          makeElement(
+            "span",
+            "badge",
+            x.status === "present" ? "Presente" : "Ausente",
+          ),
+        );
+        body.append(row);
+      }
+      details.append(heading, body);
+      list.append(details);
+    }
+  }
+  function renderAnotaHistory() {
+    const classId = $("anotaHistoryClass").value,
+      month = $("anotaHistoryMonth").value,
+      c = cls(classId),
+      summary = $("anotaHistorySummary"),
+      attendanceList = $("anotaAttendanceHistoryList"),
+      exitList = $("anotaExitHistoryList"),
+      occurrenceList = $("anotaOccurrenceHistoryList");
+    if (!c || !month) {
+      summary.textContent = "Selecione uma turma e um mês.";
+      attendanceList.replaceChildren();
+      exitList.replaceChildren();
+      occurrenceList.replaceChildren();
+      return;
+    }
+    const attendance = state.attendance
+        .filter(
+          (x) =>
+            x.classId === classId && String(x.dateKey || "").startsWith(month),
+        )
+        .sort(
+          (a, b) =>
+            String(a.dateKey || "").localeCompare(String(b.dateKey || "")) ||
+            String(student(a.studentId)?.name || "").localeCompare(
+              String(student(b.studentId)?.name || ""),
+              "pt-BR",
+            ),
+        ),
+      exits = state.exits
+        .filter(
+          (x) =>
+            x.classId === classId &&
+            ((x.departureAt &&
+              localDateKey(new Date(x.departureAt)).startsWith(month)) ||
+              (x.returnAt &&
+                localDateKey(new Date(x.returnAt)).startsWith(month))),
+        )
+        .sort((a, b) =>
+          String(b.departureAt || "").localeCompare(
+            String(a.departureAt || ""),
+          ),
+        ),
+      occurrences = state.occurrences
+        .filter(
+          (x) =>
+            x.classId === classId &&
+            String(
+              x.incidentDate ||
+                (x.timestamp ? localDateKey(new Date(x.timestamp)) : ""),
+            ).startsWith(month),
+        )
+        .sort((a, b) =>
+          String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
+        ),
+      discipline = state.disciplines.find((d) => d.id === c.disciplineId);
+    summary.textContent =
+      (discipline?.name || "") +
+      " • " +
+      c.name +
+      " • " +
+      month +
+      " — " +
+      attendance.length +
+      " marcação(ões), " +
+      exits.length +
+      " saída(s), " +
+      occurrences.length +
+      " ocorrência(s)";
+    attendanceList.replaceChildren();
+    exitList.replaceChildren();
+    occurrenceList.replaceChildren();
+    if (!attendance.length)
+      emptyMessage(attendanceList, "Nenhuma chamada neste mês.");
+    for (const x of attendance) {
+      const item = makeElement("div", "item row between"),
+        left = makeElement("span"),
+        who = makeElement(
+          "strong",
+          "",
+          student(x.studentId)?.name || "Aluno removido",
+        ),
+        date = makeElement(
+          "span",
+          "muted",
+          " • " + formatLocalDate(x.dateKey + "T12:00:00"),
+        );
+      left.append(who, date);
+      item.append(
+        left,
+        makeElement(
+          "span",
+          "badge",
+          x.status === "present" ? "Presente" : "Ausente",
+        ),
+      );
+      attendanceList.append(item);
+    }
+    if (!exits.length)
+      emptyMessage(exitList, "Nenhuma saída ou retorno neste mês.");
+    for (const x of exits) {
+      const duration = x.returnAt
+          ? Math.max(
+              0,
+              Math.round(
+                (Date.parse(x.returnAt) - Date.parse(x.departureAt)) / 60000,
+              ),
+            )
+          : null,
+        item = makeElement("div", "item"),
+        date =
+          "Saiu: " +
+          formatLocalDateTime(x.departureAt) +
+          (x.returnAt
+            ? " • Retornou: " +
+              formatLocalDateTime(x.returnAt) +
+              " • Fora por " +
+              duration +
+              " min"
+            : " • Ainda fora");
+      item.append(
+        makeElement(
+          "strong",
+          "",
+          student(x.studentId)?.name || "Aluno removido",
+        ),
+        makeElement("div", "muted", date),
+      );
+      exitList.append(item);
+    }
+    if (!occurrences.length)
+      emptyMessage(occurrenceList, "Nenhuma ocorrência neste mês.");
+    for (const x of occurrences) {
+      const item = makeElement("div", "item occurrence-history-item"),
+        top = makeElement("div", "row between"),
+        bottom = makeElement("div", "row between"),
+        date =
+          (x.incidentDate
+            ? formatLocalDate(x.incidentDate + "T12:00:00")
+            : "") +
+          (x.timestamp
+            ? " • Registrada " + formatLocalDateTime(x.timestamp)
+            : ""),
+        deleteButton = makeElement(
+          "button",
+          "smallbtn danger",
+          "Apagar registro",
+        );
+      deleteButton.type = "button";
+      deleteButton.dataset.deleteOccurrence = x.id;
+      top.append(
+        makeElement(
+          "strong",
+          "",
+          student(x.studentId)?.name || "Aluno removido",
+        ),
+        makeElement("span", "badge", x.category || "Outro"),
+      );
+      bottom.append(makeElement("span", "muted", date), deleteButton);
+      item.append(top, makeElement("div", "", x.notes || ""), bottom);
+      occurrenceList.append(item);
+    }
+  }
+  async function setAttendance(studentId, status) {
+    const classId = $("actionClass").value,
+      day = todayKey(),
+      studentRecord = student(studentId);
+    if (!studentRecord || studentRecord.classId !== classId) return;
+    let row = state.attendance.find(
+        (x) =>
+          x.classId === classId &&
+          x.studentId === studentId &&
+          x.dateKey === day,
+      ),
+      previous = row ? { ...row } : null;
+    if (row) {
+      row.status = status;
+      row.timestamp = new Date().toISOString();
+    } else {
+      row = {
+        id: uid(),
+        classId,
+        studentId,
+        dateKey: day,
+        status,
+        timestamp: new Date().toISOString(),
+      };
+      state.attendance.push(row);
+    }
+    try {
+      await save();
+    } catch (err) {
+      if (previous) Object.assign(row, previous);
+      else state.attendance = state.attendance.filter((x) => x.id !== row.id);
+      throw err;
+    }
+    renderAttendancePanel();
+    renderAttendanceHistory();
+    renderAnotaHistory();
+    toast(
+      `${studentRecord.name}: ${status === "present" ? "presença" : "ausência"} registrada.`,
+    );
+  }
+  async function toggleExit(studentRecord, classId = $("exitClass").value) {
+    const open = state.exits.find(
+        (x) =>
+          x.classId === classId &&
+          x.studentId === studentRecord.id &&
+          !x.returnAt,
+      ),
+      now = new Date().toISOString(),
+      previousReturn = open?.returnAt;
+    if (open) open.returnAt = now;
+    else
+      state.exits.push({
+        id: uid(),
+        classId,
+        studentId: studentRecord.id,
+        departureAt: now,
+        returnAt: null,
+      });
+    const changed = open || state.exits[state.exits.length - 1];
+    try {
+      await save();
+    } catch (err) {
+      if (open) open.returnAt = previousReturn;
+      else state.exits = state.exits.filter((x) => x !== changed);
+      throw err;
+    }
+    renderExitPanel();
+    renderAnotaHistory();
+    toast(
+      open
+        ? `${studentRecord.name}: retorno registrado.`
+        : `${studentRecord.name}: saída registrada.`,
+    );
+  }
+  let actionScanner = null,
+    lastActionToken = "",
+    lastActionAt = 0,
+    actionScannerPurpose = "",
+    visitCameraTimer = null,
+    actionCameraTimer = null;
+  function armCameraTimer(type) {
+    if (type === "vista") {
+      clearTimeout(visitCameraTimer);
+      visitCameraTimer = setTimeout(() => {
+        stopScanner();
+        $("scanMessage").textContent =
+          "Câmera fechada após 60 segundos sem leitura.";
+      }, 60000);
+    } else {
+      clearTimeout(actionCameraTimer);
+      actionCameraTimer = setTimeout(() => {
+        stopActionScanner();
+        const messageId =
+          actionScannerPurpose === "exit"
+            ? "exitMessage"
+            : actionScannerPurpose === "occurrence"
+              ? "occurrenceMessage"
+              : "actionMessage";
+        $(messageId).textContent =
+          "Câmera fechada após 60 segundos sem leitura.";
+      }, 60000);
+    }
+  }
+  async function startActionScanner(purpose = "attendance") {
+    const classSelect =
+        purpose === "exit"
+          ? "exitClass"
+          : purpose === "occurrence"
+            ? "occurrenceClass"
+            : "actionClass",
+      readerId =
+        purpose === "exit"
+          ? "exitReader"
+          : purpose === "occurrence"
+            ? "occurrenceReader"
+            : "actionReader",
+      messageId =
+        purpose === "exit"
+          ? "exitMessage"
+          : purpose === "occurrence"
+            ? "occurrenceMessage"
+            : "actionMessage";
+    if (!$(classSelect).value) return toast("Selecione uma turma.");
+    if (!window.Html5Qrcode)
+      return toast(
+        "O leitor de QR não carregou. Recarregue o aplicativo e tente novamente.",
+      );
+    try {
+      if (actionScanner && actionScannerPurpose !== purpose) {
+        await stopActionScanner();
+        actionScanner = null;
+      }
+      if (!actionScanner) actionScanner = new Html5Qrcode(readerId);
+      actionScannerPurpose = purpose;
+      await actionScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        async (decoded) => {
+          armCameraTimer("action");
+          if (actionScanner?.isScanning) actionScanner.pause(true);
+          const token = decoded.trim();
+          if (token === lastActionToken && Date.now() - lastActionAt < 1800) {
+            setTimeout(() => actionScanner?.resume(), 500);
+            return;
+          }
+          lastActionToken = token;
+          lastActionAt = Date.now();
+          const classId = $(classSelect).value,
+            s = state.students.find(
+              (x) =>
+                x.classId === classId &&
+                (x.qrToken === token || x.id === token),
+            );
+          if (!s) {
+            $(messageId).textContent =
+              "Este crachá não corresponde a um aluno da turma selecionada.";
+            setTimeout(() => actionScanner?.resume(), 900);
+            return;
+          }
+          try {
+            if (purpose === "attendance") {
+              await setAttendance(s.id, "present");
+              $(messageId).textContent =
+                `${s.name}: presença marcada. Leia o próximo crachá.`;
+            } else if (purpose === "exit") {
+              await toggleExit(s, classId);
+              $(messageId).textContent =
+                `${s.name}: registro de saída/retorno atualizado.`;
+            } else {
+              $("occurrenceStudent").value = s.id;
+              $(messageId).textContent =
+                `${s.name} selecionado. Escolha o tipo e registre a ocorrência.`;
+              renderOccurrences();
+            }
+          } catch (err) {
+            $(messageId).textContent =
+              err.message || "Não foi possível salvar o registro.";
+          }
+          if (purpose !== "occurrence")
+            setTimeout(() => actionScanner?.resume(), 700);
+        },
+        () => {},
+      );
+      armCameraTimer("action");
+      $(messageId).textContent =
+        "Câmera ativa. Aponte para o QR Code do crachá.";
+    } catch (err) {
+      $(messageId).textContent =
+        "Não foi possível abrir a câmera. Verifique a permissão do navegador e use o endereço HTTPS.";
+    }
+  }
 
-async function stopActionScanner(){clearTimeout(actionCameraTimer);if(actionScanner){try{await actionScanner.stop()}catch{try{await actionScanner.clear()}catch{}}}const messageId=actionScannerPurpose==='exit'?'exitMessage':actionScannerPurpose==='occurrence'?'occurrenceMessage':'actionMessage';if($(messageId))$(messageId).textContent='Leitor fechado.'}
-document.addEventListener('click',async e=>{
-  const target=e.target instanceof Element?e.target:null,b=target?.closest('button');if(!b)return;
-  if(b.id==='copyPixCodeOnboarding'){await copyPixCode();return}
-  if(b.dataset.product){await openProduct(b.dataset.product);return}
-  if(b.dataset.chooseProduct){postChooserPanel='';await openProduct(b.dataset.chooseProduct);return}
-  if(b.dataset.onboarding){if(b.id==='copyPixCodeOnboarding'){await copyPixCode();return}await advanceOnboarding(b.dataset.onboarding);return}
-  if(b.dataset.reminder){await finishReminder(b.dataset.reminder);return}
-  if(b.dataset.panel){await showPanel(b.dataset.panel);return}
-  if(b.dataset.openPanel){await showPanel(b.dataset.openPanel);return}
-  if(b.id==='reloadApp'){location.reload();return}
-  if(b.id==='lockApp'){lockApp();return}
-  if(b.dataset.go){$('historyClass').value=b.dataset.class;await showPanel('historyPanel');return}
-  if(b.id==='addDiscipline'){const name=$('disciplineName').value.trim();if(!name)return toast('Digite o nome da disciplina.');if(state.disciplines.some(d=>d.name.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))return toast('Essa disciplina já está cadastrada.');state.disciplines.push({id:uid(),name});state.activeDisciplineId=state.disciplines[state.disciplines.length-1].id;$('disciplineName').value='';await save();render();toast('Disciplina criada.');return}
-  if(b.id==='addClass'){const name=$('className').value.trim();if(!state.activeDisciplineId)return toast('Cadastre e selecione uma disciplina primeiro.');if(!name)return toast('Digite o nome da turma.');state.classes.push({id:uid(),disciplineId:state.activeDisciplineId,name,gradeMode:'sum',maxGrade:10});$('className').value='';await save();render();toast('Turma criada.');return}
-  if(b.dataset.addstudent){const row=b.parentElement,inp=row?.querySelector('input[data-newstudent]'),reg=row?.querySelector('input[data-reg]');if(!inp||!reg)return toast('Não encontrei os campos do aluno. Recarregue a página e tente novamente.');const name=inp.value.trim(),registration=reg.value.trim();if(!name)return toast('Digite o nome do aluno.');const newStudent={id:uid(),classId:b.dataset.addstudent,name,registration,qrToken:qrTokenForManual(registration,name,b.dataset.addstudent)};state.students.push(newStudent);try{await save()}catch(err){state.students=state.students.filter(s=>s.id!==newStudent.id);toast(err.message||'Não foi possível salvar o aluno.');return}render();toast('Aluno cadastrado.');return}
-  if(b.dataset.shareQr){const s=student(b.dataset.shareQr),other=s&&qrLinkCandidate(s);if(!s||!other)return toast('Não encontrei um único aluno correspondente para unificar.');if(!confirm('Unificar o QR de '+s.name+' com o cadastro da turma '+(cls(other.classId)?.name||'')+'? Os próximos crachás impressos usarão o mesmo código.'))return;s.qrToken=other.qrToken||other.id;await save();render();toast('QR do aluno unificado entre os cadastros.');return}
-  if(b.dataset.delstudent){const s=student(b.dataset.delstudent);if(!s)return;if(!confirm('Remover '+s.name+'? Os registros já salvos serão preservados no histórico.'))return;state.students=state.students.filter(x=>x.id!==s.id);await save();render();return}
-  if(b.dataset.status){await record(b.dataset.status);return}
-  if(b.dataset.markPresence){await setAttendance(b.dataset.markPresence,b.dataset.presenceStatus);return}
-  if(b.id==='startActionScan'){startActionScanner('attendance');return}
-  if(b.id==='startExitScan'){startActionScanner('exit');return}
-  if(b.id==='startOccurrenceScan'){startActionScanner('occurrence');return}
-  if(b.id==='startScan'){startScanner();return}
-  if(b.id==='saveOccurrence'){const classId=$('occurrenceClass').value,studentId=$('occurrenceStudent').value,s=student(studentId),category=$('occurrenceCategory').value;if(!s||s.classId!==classId)return toast('Selecione um aluno desta turma ou leia o crachá.');const row={id:uid(),classId,studentId,category,notes:$('occurrenceNotes').value.trim(),incidentDate:$('occurrenceDate').value||localDateKey(),timestamp:new Date().toISOString()};state.occurrences.push(row);try{await save()}catch(err){state.occurrences=state.occurrences.filter(x=>x.id!==row.id);toast(err.message||'Não foi possível salvar a ocorrência.');return}$('occurrenceNotes').value='';renderOccurrences();renderAnotaHistory();toast('Ocorrência registrada neste aparelho.');return}
-  if(b.dataset.deleteOccurrence){const row=state.occurrences.find(x=>x.id===b.dataset.deleteOccurrence);if(!row)return;if(!confirm('Apagar esta ocorrência? Essa ação não pode ser desfeita.'))return;state.occurrences=state.occurrences.filter(x=>x.id!==row.id);try{await save()}catch(err){state.occurrences.push(row);toast(err.message||'Não foi possível apagar o registro.');return}renderOccurrences();renderAnotaHistory();toast('Ocorrência apagada.');return}
-  if(b.id==='exportAttendanceMonth'){exportAttendanceMonth();return}
-  if(b.id==='exportAnotaAttendanceHistory'){$('attendanceHistoryClass').value=$('anotaHistoryClass').value;$('attendanceHistoryMonth').value=$('anotaHistoryMonth').value;exportAttendanceMonth();return}
-  if(b.id==='saveGrade'){const c=cls($('historyClass').value);if(!c)return;c.gradeMode=$('gradeMode').value;c.maxGrade=Number($('maxGrade').value)||10;await save();renderHistory();toast('Cálculo salvo.');return}
-  if(b.id==='printLabels'){window.print();return}
-  if(b.id==='downloadBackup'){downloadBackup();return}
-  if(b.id==='exportClass'){exportClass();return}
-  if(b.id==='clearAllData'){await clearAllData();return}
-  if(b.id==='downloadStudentTemplate')downloadStudentTemplate();
-});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){closeAllCameras();clearTimeout(hiddenLockTimer);hiddenLockTimer=setTimeout(()=>lockApp().catch(()=>{}),5*60*1000)}else{clearTimeout(hiddenLockTimer);resetIdleLock()}});
-$('activeDiscipline').addEventListener('change',async()=>{const selected=$('activeDiscipline').value;state.activeDisciplineId=state.disciplines.some(d=>d.id===selected)?selected:'';currentStudent=null;$('studentResult').classList.add('hidden');await closeAllCameras();await save();render()});
-$('actionClass').addEventListener('change',renderAttendancePanel);$('actionDate').addEventListener('change',renderAttendancePanel);$('exitClass').addEventListener('change',renderExitPanel);$('occurrenceClass').addEventListener('change',renderOccurrences);$('occurrenceStudent').addEventListener('change',renderOccurrences);$('attendanceHistoryClass').addEventListener('change',renderAttendanceHistory);$('attendanceHistoryMonth').addEventListener('change',renderAttendanceHistory);$('anotaHistoryClass').addEventListener('change',renderAnotaHistory);$('anotaHistoryMonth').addEventListener('change',renderAnotaHistory);$('occurrenceDate').value=localDateKey();$('actionDate').value=localDateKey();$('attendanceHistoryMonth').value=localDateKey().slice(0,7);$('anotaHistoryMonth').value=localDateKey().slice(0,7);
- async function clearAllData(){const hasData=state.disciplines.length||state.classes.length||state.students.length||state.visits.length||state.attendance.length||state.exits.length||state.occurrences.length;if(!hasData)return toast('Não há dados cadastrados para apagar.');if(!confirm('Isto apagará todas as disciplinas, turmas, alunos, vistos, chamadas, saídas e ocorrências deste navegador. A ação não pode ser desfeita. Se quiser guardar os registros, salve um backup completo. Continuar?'))return;if((prompt('Para confirmar, digite APAGAR:')||'').trim().toUpperCase()!=='APAGAR')return toast('A limpeza foi cancelada.');let dbRemoved=!window.indexedDB;try{if(window.indexedDB){try{await deleteIndexedDatabase();dbRemoved=true}catch(err){if(storageMode!=='localStorage')throw err}}localStorage.removeItem(LOCAL_STATE_KEY);if(dbRemoved)localStorage.removeItem(RESET_MARKER_KEY);else localStorage.setItem(RESET_MARKER_KEY,'1');const profile={profileName:state.profileName,onboardingComplete:state.onboardingComplete,onboardingStep:'',accessCount:state.accessCount,activeProduct:state.activeProduct};state=emptyState();Object.assign(state,profile);storageMode=dbRemoved?(window.indexedDB?'indexedDB':'localStorage'):'localStorage';render();updateStorageStatus();toast(dbRemoved?'Todos os dados foram apagados deste navegador.':'Os dados alternativos foram apagados. O banco principal está indisponível e será ignorado até que possa ser removido.')}catch(err){toast('Não foi possível concluir a limpeza. Feche outras abas do Vista Aí, faça backup e tente novamente.')}}
-window.addEventListener('unhandledrejection',event=>{event.preventDefault();toast(event.reason?.message||'Não foi possível salvar essa alteração. Verifique o armazenamento do navegador.')});
-async function startScanner(){const c=cls($('scanClass').value),activity=$('activity').value.trim();if(!c)return toast('Cadastre e selecione uma turma.');if(!activity)return toast('Informe a atividade antes de abrir a câmera.');if(!window.Html5Qrcode)return toast('O leitor não carregou. Recarregue o aplicativo e tente novamente.');try{if(!scanner)scanner=new Html5Qrcode('reader');await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},decoded=>{armCameraTimer('vista');if(scanner?.isScanning)scanner.pause(true);const token=decoded.trim(),s=state.students.find(x=>x.classId===$('scanClass').value&&(x.qrToken===token||x.id===token));if(!s){$('scanMessage').textContent='Este QR Code não corresponde a um aluno da turma selecionada.';setTimeout(()=>scanner?.resume(),900);return}currentStudent=s;const discipline=state.disciplines.find(d=>d.id===c.disciplineId);$('resultClass').textContent=`${discipline?.name||''} • ${c.name}`;$('resultName').textContent=s.name;$('resultId').textContent=s.registration?`Matrícula: ${s.registration}`:'';$('studentResult').classList.remove('hidden');$('scanMessage').textContent='Escolha a situação da atividade. Depois, o leitor continua pronto para o próximo aluno.'},()=>{});armCameraTimer('vista');$('scanMessage').textContent='Câmera ativa. Aponte para o QR Code do aluno.'}catch(err){$('scanMessage').textContent='Não foi possível abrir a câmera. Verifique a permissão do Safari e abra o app pelo endereço HTTPS.';toast('Falha ao abrir a câmera.')}}
-async function stopScanner(){clearTimeout(visitCameraTimer);if(scanner){try{await scanner.stop()}catch{try{await scanner.clear()}catch{}}}if($('scanMessage'))$('scanMessage').textContent='Leitor fechado.'}
-async function record(status){if(!currentStudent)return;const labels={feito:'Feito',incompleto:'Incompleto',nao_feito:'Não feito'},values={feito:1,incompleto:.5,nao_feito:0},activity=$('activity').value.trim(),visit={id:uid(),classId:currentStudent.classId,studentId:currentStudent.id,activity,status,statusLabel:labels[status],value:values[status],timestamp:new Date().toISOString()};state.visits.push(visit);try{await save()}catch(err){state.visits=state.visits.filter(v=>v.id!==visit.id);throw err}$('studentResult').classList.add('hidden');currentStudent=null;$('scanMessage').textContent='Visto registrado. Leia o próximo aluno.';if(scanner?.isScanning)scanner.resume();toast('Visto salvo.')}
-$('gradeMode').addEventListener('change',()=>{ $('maxGradeWrap').classList.toggle('hidden',$('gradeMode').value!=='scaled')});['historyClass','labelsClass'].forEach(id=>$(id).addEventListener('change',render));$('historyClass').addEventListener('change',renderHistory);$('labelsClass').addEventListener('change',renderLabels);
-function parseCSV(text){const first=text.split(/\r?\n/,1)[0],sep=(first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?';':',';const rows=[];let row=[],cell='',q=false;const pushCell=()=>{if(cell.length>250)throw Error('A planilha contém um campo muito longo. Limite cada célula a 250 caracteres.');row.push(cell);cell='';if(row.length>20)throw Error('A planilha pode ter no máximo 20 colunas.');};const pushRow=()=>{pushCell();if(row.some(x=>String(x).trim()))rows.push(row);if(rows.length>MAX_IMPORT_ROWS+1)throw Error('A planilha pode ter no máximo 5.000 alunos.');row=[]};for(let i=0;i<text.length;i++){const ch=text[i];if(ch==='"'&&q&&text[i+1]==='"'){cell+='"';i++}else if(ch==='"')q=!q;else if(ch===sep&&!q)pushCell();else if((ch==='\n'||ch==='\r')&&!q){if(ch==='\r'&&text[i+1]==='\n')i++;pushRow()}else{cell+=ch;if(cell.length>250)throw Error('A planilha contém um campo muito longo. Limite cada célula a 250 caracteres.')}}if(q)throw Error('O CSV tem aspas sem fechamento. Corrija a planilha e tente novamente.');if(cell||row.length)pushRow();return rows}function normalizeHeader(value){return String(value||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR')}function assertXlsxContainer(buffer){if(buffer.byteLength<22)throw Error('O arquivo .xlsx está incompleto.');const view=new DataView(buffer),min=Math.max(0,buffer.byteLength-65557);let end=-1;for(let i=buffer.byteLength-22;i>=min;i--)if(view.getUint32(i,true)===0x06054b50){end=i;break}if(end<0)throw Error('O arquivo não tem uma estrutura .xlsx válida.');const disk=view.getUint16(end+4,true),diskEntries=view.getUint16(end+8,true),totalEntries=view.getUint16(end+10,true),directorySize=view.getUint32(end+12,true),directoryOffset=view.getUint32(end+16,true);if(disk!==0||diskEntries!==totalEntries||totalEntries>2000||directoryOffset+directorySize>end)throw Error('A estrutura .xlsx excede os limites permitidos.');let pos=directoryOffset,totalUncompressed=0;for(let i=0;i<totalEntries;i++){if(pos+46>buffer.byteLength||view.getUint32(pos,true)!==0x02014b50)throw Error('A estrutura .xlsx contém uma entrada inválida.');const flags=view.getUint16(pos+8,true),method=view.getUint16(pos+10,true),compressed=view.getUint32(pos+20,true),uncompressed=view.getUint32(pos+24,true),nameLength=view.getUint16(pos+28,true),extraLength=view.getUint16(pos+30,true),commentLength=view.getUint16(pos+32,true),next=pos+46+nameLength+extraLength+commentLength;if(flags&1||![0,8].includes(method)||compressed===0xffffffff||uncompressed===0xffffffff||next>buffer.byteLength)throw Error('A planilha usa um formato compactado ou criptografado não permitido.');totalUncompressed+=uncompressed;if(totalUncompressed>20*1024*1024)throw Error('A planilha descompactada excede 20 MB.');if(uncompressed>Math.max(1024*1024,compressed*1000))throw Error('A planilha tem uma taxa de compactação incomum.');pos=next}if(pos>directoryOffset+directorySize)throw Error('A estrutura .xlsx excede os limites permitidos.')}async function readXlsxRowsInWorker(file){if(!window.Worker)throw Error('Este navegador não permite a leitura protegida da planilha. Use um navegador atualizado.');const buffer=await file.arrayBuffer();assertXlsxContainer(buffer);const libraryUrl=new URL('./vendor/xlsx-0.20.3.full.min.js',location.href).href,workerSource=`importScripts(${JSON.stringify(libraryUrl)});self.onmessage=({data})=>{try{const workbook=XLSX.read(data,{type:'array',cellFormula:false,cellHTML:false,cellStyles:false,bookVBA:false,bookFiles:false,WTF:false});if(!workbook.SheetNames.length||workbook.SheetNames.length>20)throw new Error('A planilha deve ter de 1 a 20 abas.');const sheet=workbook.Sheets[workbook.SheetNames[0]],range=XLSX.utils.decode_range(sheet['!ref']||'A1');if(range.e.r-range.s.r+1>5001||range.e.c>19)throw new Error('A primeira aba pode conter no máximo 5.000 alunos e 20 colunas.');const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',range:{s:{r:range.s.r,c:range.s.c},e:{r:range.e.r,c:range.e.c}}});self.postMessage({rows})}catch(error){self.postMessage({error:String(error?.message||'Não foi possível ler esta planilha.')})}}`;const blobUrl=URL.createObjectURL(new Blob([workerSource],{type:'text/javascript'})),worker=new Worker(blobUrl);try{return await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{worker.terminate();reject(new Error('A planilha demorou demais para abrir. Confira o arquivo e tente novamente.'))},15000);worker.onmessage=e=>{clearTimeout(timer);if(e.data?.error)reject(new Error(e.data.error));else resolve(e.data.rows)};worker.onerror=()=>{clearTimeout(timer);reject(new Error('Não foi possível ler essa planilha com segurança. Salve-a novamente como .xlsx.'))};worker.postMessage(buffer,[buffer])});}finally{worker.terminate();URL.revokeObjectURL(blobUrl)}}async function readStudentRows(file){if(file.size>MAX_IMPORT_BYTES)throw Error('O arquivo deve ter até 5 MB.');if(/\.csv$/i.test(file.name)){const rows=parseCSV(await file.text());if(rows.length>MAX_IMPORT_ROWS+1)throw Error('A planilha pode ter no máximo 5.000 alunos.');return rows}if(!/\.xlsx$/i.test(file.name))throw Error('Use um arquivo .xlsx ou .csv.');return readXlsxRowsInWorker(file)}function downloadStudentTemplate(){if(!window.XLSX)throw Error('A biblioteca local de planilhas não carregou. Atualize o aplicativo e tente novamente.');const wb=XLSX.utils.book_new(),students=XLSX.utils.aoa_to_sheet([['Nome','Turma','Matrícula']]),instructions=XLSX.utils.aoa_to_sheet([['Modelo para importar alunos no Vista Aí'],['Preencha uma linha para cada aluno.'],['Nome é obrigatório. Turma deve corresponder ao nome da turma cadastrada. Matrícula é opcional.'],['Se Turma ficar vazia, o app usará a turma padrão selecionada na tela.']]);students['!cols']=[{wch:32},{wch:18},{wch:22}];students['!autofilter']={ref:'A1:C1'};instructions['!cols']=[{wch:100}];XLSX.utils.book_append_sheet(wb,students,'Alunos');XLSX.utils.book_append_sheet(wb,instructions,'Instruções');XLSX.writeFile(wb,'modelo-alunos-vistaai.xlsx')} $('importFile').addEventListener('change',async e=>{const input=e.currentTarget,f=input?.files?.[0],fallbackClassId=$('importClass').value;if(!f)return;try{const rows=await readStudentRows(f);if(rows.length<2)throw Error('A planilha precisa de cabeçalho e pelo menos um aluno');const heads=rows[0].map(normalizeHeader),ni=heads.findIndex(x=>['nome','aluno','estudante'].includes(x)),ri=heads.findIndex(x=>['matricula','registro'].includes(x)),ti=heads.findIndex(x=>['turma','classe'].includes(x));if(ni<0)throw Error('Não encontrei uma coluna “Nome” no cabeçalho');if(rows[0].length>20)throw Error('A planilha pode ter no máximo 20 colunas.');const classes=classesForActive(),fallbackClass=classes.find(c=>c.id===fallbackClassId);if(ti<0&&!fallbackClass)throw Error('Selecione uma turma de destino.');const findClass=name=>classes.find(c=>normalizeHeader(c.name)===normalizeHeader(name));const prepared=[],seen=new Set(state.students.map(s=>`${s.classId}|${normalizeHeader(s.name)}`));let duplicates=0;for(const r of rows.slice(1)){const name=String(r[ni]||'').trim();if(!name)continue;if(name.length>120)throw Error('Cada nome pode ter no máximo 120 caracteres.');const className=ti>=0?String(r[ti]||'').trim():'';if(className.length>80)throw Error('Cada nome de turma pode ter no máximo 80 caracteres.');const targetClass=className?findClass(className):fallbackClass;if(!targetClass)throw Error(`A turma “${className}” não foi encontrada nesta disciplina. Confira o nome ou deixe a célula vazia para usar a turma padrão.`);const key=`${targetClass.id}|${normalizeHeader(name)}`;if(seen.has(key)){duplicates++;continue}seen.add(key);const registration=ri>=0?String(r[ri]||'').trim():'';if(registration.length>80)throw Error('Cada matrícula pode ter no máximo 80 caracteres.');prepared.push({id:uid(),classId:targetClass.id,name,registration,qrToken:qrTokenForRegistration()})}if(!prepared.length)throw Error(duplicates?'Todos os alunos da planilha já estão cadastrados.':'Não encontrei alunos com nome preenchido.');const previous=state.students;state.students=[...previous,...prepared];try{await save()}catch(err){state.students=previous;throw err}render();$('importName').textContent=f.name;toast(`${prepared.length} aluno(s) importado(s).${duplicates?` ${duplicates} repetido(s) ignorado(s).`:''}`)}catch(err){toast(err.message||'Não foi possível importar a planilha.')}if(input)input.value=''});
- function download(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}async function shareEncryptedFile(name,encrypted,title){const blob=new Blob([JSON.stringify(encrypted,null,2)],{type:'application/json'});if(navigator.share&&navigator.canShare){const file=new File([blob],name,{type:'application/json'});if(navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title})}catch(err){if(err.name!=='AbortError')download(name,blob)}return}}download(name,blob)}async function downloadBackup(){const day=localDateKey(),name=`backup-vistaai-${day}.json`,encrypted=await encryptEnvelope({kind:'full-backup',version:2,exportedAt:new Date().toISOString(),...state});await shareEncryptedFile(name,encrypted,'Backup criptografado do Vista Aí')}
-function assertRecordId(value,label){if(typeof value!=='string'||!value.trim()||value.length>120)throw Error('O arquivo contém um identificador inválido ('+label+').')}function assertText(value,max,label,required=false){if(typeof value!=='string'||(required&&!value.trim())||value.length>max)throw Error('O arquivo contém um campo inválido ('+label+').')}function assertUniqueIds(rows,label){const ids=new Set();for(const row of rows){if(!row||typeof row!=='object'||Array.isArray(row))throw Error('O arquivo contém um registro inválido ('+label+').');assertRecordId(row.id,label);if(ids.has(row.id))throw Error('O arquivo contém identificadores repetidos ('+label+').');ids.add(row.id)}return ids}function validateAppData(data){if(!data||typeof data!=='object'||Array.isArray(data))throw Error('O arquivo não contém dados válidos.');for(const key of ['disciplines','classes','students','visits','attendance','exits','occurrences'])if(!Array.isArray(data[key]))throw Error('O arquivo está incompleto ('+key+').');const limits={disciplines:100,classes:500,students:20000,visits:1000000,attendance:500000,exits:500000,occurrences:500000};for(const key of Object.keys(limits))if(data[key].length>limits[key])throw Error('O arquivo excede o limite de registros de '+key+'.');const disciplines=assertUniqueIds(data.disciplines,'disciplina'),classes=assertUniqueIds(data.classes,'turma'),students=assertUniqueIds(data.students,'aluno'),studentClasses=new Map(data.students.map(x=>[x.id,x.classId]));for(const d of data.disciplines)assertText(d.name,100,'nome da disciplina',true);for(const c of data.classes){assertText(c.name,80,'nome da turma',true);if(c.disciplineId&&!disciplines.has(c.disciplineId))throw Error('Uma turma aponta para uma disciplina inexistente.')}for(const x of data.students){assertRecordId(x.classId,'turma do aluno');if(!classes.has(x.classId))throw Error('Um aluno aponta para uma turma inexistente.');assertText(x.name,120,'nome do aluno',true);assertText(String(x.registration||''),80,'matrícula');assertText(String(x.qrToken||x.id),120,'QR do aluno')}const validDate=value=>typeof value==='string'&&value.length<=40&&Number.isFinite(Date.parse(value)),eventIds={visits:new Set(),attendance:new Set(),exits:new Set(),occurrences:new Set()};const checkEvent=(x,label,key)=>{if(!x||typeof x!=='object'||Array.isArray(x))throw Error('O arquivo contém registro inválido ('+label+').');assertRecordId(x.id,label);if(eventIds[key].has(x.id))throw Error('O arquivo contém registros repetidos ('+label+').');eventIds[key].add(x.id);assertRecordId(x.classId,'turma do '+label);assertRecordId(x.studentId,'aluno do '+label);if(!classes.has(x.classId)||(students.has(x.studentId)&&studentClasses.get(x.studentId)!==x.classId))throw Error('Um registro aponta para aluno ou turma incorretos ('+label+').')};for(const x of data.visits){checkEvent(x,'visto','visits');if(!validDate(x.timestamp))throw Error('Um visto tem data inválida.');assertText(String(x.activity||''),200,'atividade');if(!['feito','incompleto','nao_feito'].includes(x.status)||![0,.5,1].includes(Number(x.value)))throw Error('Um visto tem situação ou nota inválida.')}for(const x of data.attendance){checkEvent(x,'chamada','attendance');if(!/^\d{4}-\d{2}-\d{2}$/.test(String(x.dateKey||''))||!validDate(x.timestamp)||!['present','absent'].includes(x.status))throw Error('Uma chamada tem dados inválidos.')}for(const x of data.exits){checkEvent(x,'saída','exits');if(!validDate(x.departureAt)||(x.returnAt!==null&&x.returnAt!==undefined&&!validDate(x.returnAt)))throw Error('Uma saída tem horários inválidos.')}for(const x of data.occurrences){checkEvent(x,'ocorrência','occurrences');assertText(String(x.category||''),100,'categoria');assertText(String(x.notes||''),1000,'anotação');if(!validDate(x.timestamp)||!/^\d{4}-\d{2}-\d{2}$/.test(String(x.incidentDate||'')))throw Error('Uma ocorrência tem data inválida.')}return true}function localDateKey(date=new Date()){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`}
-async function exportDay(){const day=$('dailyDate').value||localDateKey(),visits=state.visits.filter(v=>localDateKey(new Date(v.timestamp))===day),attendance=state.attendance.filter(x=>x.dateKey===day),exits=state.exits.filter(x=>localDateKey(new Date(x.departureAt))===day||(x.returnAt&&localDateKey(new Date(x.returnAt))===day)),occurrences=state.occurrences.filter(x=>localDateKey(new Date(x.timestamp))===day),events=[...visits,...attendance,...exits,...occurrences],classIds=new Set(events.map(x=>x.classId)),studentIds=new Set(events.map(x=>x.studentId)),classes=state.classes.filter(c=>classIds.has(c.id)),disciplineIds=new Set(classes.map(c=>c.disciplineId)),packet={kind:'daily-transfer',format:'vistos-historia-dia',version:5,date:day,exportedAt:new Date().toISOString(),disciplines:state.disciplines.filter(d=>disciplineIds.has(d.id)),classes,students:state.students.filter(student=>studentIds.has(student.id)),visits,attendance,exits,occurrences};await shareEncryptedFile('vistos-'+day+'.json',await encryptEnvelope(packet),'Transferência diária criptografada');toast(visits.length+' visto(s), '+attendance.length+' chamada(s), '+exits.length+' saída(s) e '+occurrences.length+' ocorrência(s) incluídas no arquivo.')} 
- document.addEventListener('click',e=>{if(e.target.closest('#exportDay'))exportDay()});
-$('dailyDate').value=localDateKey();
- $('dailyImportFile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;const previous=JSON.parse(JSON.stringify(state));try{if(f.size>MAX_BACKUP_BYTES)throw Error('O arquivo deve ter até 20 MB.');let packet=JSON.parse(await f.text());if(packet.format===SECURE_FORMAT){const password=await requestFilePassword('Importar transferência diária','Digite a senha usada para criptografar o arquivo exportado no celular ou tablet.');if(password===null){e.target.value='';return}packet=(await decryptEnvelope(packet,password)).data}else if(!confirm('Este arquivo diário está sem criptografia. Ele pode conter dados escolares legíveis. Deseja importá-lo mesmo assim?')){e.target.value='';return}if(packet.format!=='vistos-historia-dia'||!Array.isArray(packet.classes)||!Array.isArray(packet.students)||!Array.isArray(packet.visits))throw Error('Este não é um arquivo diário válido do app.');for(const key of ['attendance','exits','occurrences'])if(packet[key]!==undefined&&!Array.isArray(packet[key]))throw Error('O arquivo diário contém uma lista de registros inválida.');packet.attendance=packet.attendance||[];packet.exits=packet.exits||[];packet.occurrences=packet.occurrences||[];if(packet.classes.length>500||packet.students.length>20000||packet.visits.length>100000||packet.attendance.length>100000||packet.exits.length>100000||packet.occurrences.length>100000)throw Error('O arquivo contém mais registros do que o limite permitido.');const packetDisciplines=Array.isArray(packet.disciplines)&&packet.disciplines.length?packet.disciplines:(packet.classes.length?[{id:DEFAULT_DISCIPLINE_ID,name:'História'}]:[]);packet.disciplines=packetDisciplines;packet.classes=packet.classes.map(c=>({...c,disciplineId:c.disciplineId||packetDisciplines[0]?.id||DEFAULT_DISCIPLINE_ID}));validateAppData(packet);for(const d of packetDisciplines){const existing=state.disciplines.find(x=>x.id===d.id);if(existing)existing.name=d.name;else state.disciplines.push(d)}const classMap=new Map(packet.classes.map(c=>[c.id,c])),studentMap=new Map(packet.students.map(x=>[x.id,x]));for(const incoming of classMap.values()){const existing=cls(incoming.id);if(existing){existing.name=incoming.name;existing.disciplineId=incoming.disciplineId}else state.classes.push({...incoming,gradeMode:incoming.gradeMode||'sum',maxGrade:Number(incoming.maxGrade)||10})}for(const incoming of studentMap.values()){const existing=student(incoming.id);if(existing){existing.classId=incoming.classId;existing.name=incoming.name;existing.registration=incoming.registration||'';existing.qrToken=incoming.qrToken||existing.qrToken||existing.id}else state.students.push({...incoming,registration:incoming.registration||'',qrToken:incoming.qrToken||incoming.id})}const existingVisits=new Set(state.visits.map(v=>v.id));let added=0;for(const v of packet.visits){if(existingVisits.has(v.id))continue;state.visits.push(v);existingVisits.add(v.id);added++}for(const incoming of packet.attendance){const existing=state.attendance.find(x=>x.id===incoming.id);if(existing){existing.status=incoming.status;existing.timestamp=incoming.timestamp}else state.attendance.push(incoming)}for(const incoming of packet.exits){const existing=state.exits.find(x=>x.id===incoming.id);if(existing){if(incoming.returnAt)existing.returnAt=incoming.returnAt}else state.exits.push(incoming)}for(const incoming of packet.occurrences)if(!state.occurrences.some(x=>x.id===incoming.id))state.occurrences.push(incoming);state=normalizeState(state);await save();render();toast(added+' visto(s) importado(s); os demais registros também foram atualizados.')}catch(err){state=previous;render();toast(err.message||'Não foi possível importar o arquivo diário.')}e.target.value=''}); $('restoreFile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;const previous=JSON.parse(JSON.stringify(state));try{if(f.size>MAX_BACKUP_BYTES)throw Error('O arquivo deve ter até 20 MB.');let data=JSON.parse(await f.text());if(data.format===SECURE_FORMAT){const password=await requestFilePassword('Restaurar backup criptografado','Digite a senha usada ao salvar esse backup.');if(password===null){e.target.value='';return}data=(await decryptEnvelope(data,password)).data}else if(!confirm('Este backup está sem criptografia e pode conter dados escolares legíveis. Importá-lo grava uma cópia criptografada neste aparelho, mas não protege o arquivo original. Deseja continuar?')){e.target.value='';return}if(!data||!Array.isArray(data.classes)||!Array.isArray(data.students)||!Array.isArray(data.visits))throw Error('O arquivo não contém os dados esperados.');if(data.classes.length>500||data.students.length>20000||data.visits.length>1000000||data.attendance?.length>500000||data.exits?.length>500000||data.occurrences?.length>500000)throw Error('O backup contém mais registros do que o limite permitido.');const normalized=normalizeState(data);validateAppData(normalized);if(!confirm('Restaurar este arquivo vai substituir todos os dados deste aparelho. Continuar?'))return;state=normalized;try{await save()}catch(err){state=previous;throw err}render();toast('Backup restaurado e protegido neste aparelho.')}catch(err){state=previous;toast(err.message||'Arquivo de backup inválido.')}e.target.value=''}); function exportAttendanceMonth(){const id=$('attendanceHistoryClass').value,month=$('attendanceHistoryMonth').value,c=cls(id);if(!c||!month)return toast('Selecione turma e mês.');if(!window.XLSX)return toast('A biblioteca Excel não carregou.');const discipline=state.disciplines.find(d=>d.id===c.disciplineId),rows=state.attendance.filter(x=>x.classId===id&&String(x.dateKey||'').startsWith(month)).sort((a,b)=>a.dateKey.localeCompare(b.dateKey)||String(student(a.studentId)?.name||'').localeCompare(String(student(b.studentId)?.name||''),'pt-BR')).map(x=>({Disciplina:discipline?.name||'',Turma:c.name,Mês:month,Data:x.dateKey,Aluno:student(x.studentId)?.name||'Aluno removido',Matrícula:student(x.studentId)?.registration||'',Situação:x.status==='present'?'Presente':'Ausente',Horário:x.timestamp?new Date(x.timestamp).toLocaleTimeString('pt-BR'):''}));if(!rows.length)return toast('Não há chamadas neste mês para exportar.');const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Chamadas');const slug=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^\p{L}\p{N}-]+/gu,'-');XLSX.writeFile(wb,`chamadas-${slug(discipline?.name)}-${slug(c.name)}-${month}.xlsx`);toast('Arquivo Excel das chamadas preparado.')}
-  function exportClass(){const id=$('historyClass').value,c=cls(id);if(!c)return toast('Selecione uma turma.');if(!window.XLSX)return toast('A biblioteca Excel não carregou.');const discipline=state.disciplines.find(d=>d.id===c.disciplineId),mode=c.gradeMode||'sum',people=state.students.filter(s=>s.classId===id).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));const sumRows=people.map(s=>({Disciplina:discipline?.name||'',Turma:c.name,Aluno:s.name,Matrícula:s.registration||'',Quantidade_de_vistos:state.visits.filter(v=>v.classId===id&&v.studentId===s.id).length,Pontuação:score(mode,c,s.id),Cálculo:mode==='sum'?'Soma dos pontos':mode==='average'?'Média dos vistos':'Percentual convertido',Nota_máxima:mode==='scaled'?c.maxGrade:''}));const visitRows=state.visits.filter(v=>v.classId===id).sort((a,b)=>a.timestamp.localeCompare(b.timestamp)).map(v=>({Disciplina:discipline?.name||'',Turma:c.name,Aluno:student(v.studentId)?.name||'Aluno removido',Matrícula:student(v.studentId)?.registration||'',Atividade:v.activity,Situação:v.statusLabel,Pontos:v.value,Data:new Date(v.timestamp).toLocaleString('pt-BR')}));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sumRows),'Resultados');XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(visitRows),'Vistos');const slug=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^\p{L}\p{N}-]+/gu,'-');XLSX.writeFile(wb,`vistos-${slug(discipline?.name)}-${slug(c.name)}.xlsx`)}
-prepareApp().catch(err=>{configureGate('setup');$('privacyError').textContent=err.message||'Não foi possível preparar o armazenamento seguro.'});
+  async function stopActionScanner() {
+    clearTimeout(actionCameraTimer);
+    if (actionScanner) {
+      try {
+        await actionScanner.stop();
+      } catch {
+        try {
+          await actionScanner.clear();
+        } catch {}
+      }
+    }
+    const messageId =
+      actionScannerPurpose === "exit"
+        ? "exitMessage"
+        : actionScannerPurpose === "occurrence"
+          ? "occurrenceMessage"
+          : "actionMessage";
+    if ($(messageId)) $(messageId).textContent = "Leitor fechado.";
+  }
+  document.addEventListener("click", async (e) => {
+    const target = e.target instanceof Element ? e.target : null,
+      b = target?.closest("button");
+    if (!b) return;
+    if (b.id === "copyPixCodeOnboarding") {
+      await copyPixCode();
+      return;
+    }
+    if (b.dataset.product) {
+      await openProduct(b.dataset.product);
+      return;
+    }
+    if (b.dataset.chooseProduct) {
+      postChooserPanel = "";
+      await openProduct(b.dataset.chooseProduct);
+      return;
+    }
+    if (b.dataset.onboarding) {
+      if (b.id === "copyPixCodeOnboarding") {
+        await copyPixCode();
+        return;
+      }
+      await advanceOnboarding(b.dataset.onboarding);
+      return;
+    }
+    if (b.dataset.reminder) {
+      await finishReminder(b.dataset.reminder);
+      return;
+    }
+    if (b.dataset.panel) {
+      await showPanel(b.dataset.panel);
+      return;
+    }
+    if (b.dataset.openPanel) {
+      await showPanel(b.dataset.openPanel);
+      return;
+    }
+    if (b.id === "reloadApp") {
+      location.reload();
+      return;
+    }
+    if (b.id === "lockApp") {
+      lockApp();
+      return;
+    }
+    if (b.dataset.go) {
+      $("historyClass").value = b.dataset.class;
+      await showPanel("historyPanel");
+      return;
+    }
+    if (b.id === "addDiscipline") {
+      const name = $("disciplineName").value.trim();
+      if (!name) return toast("Digite o nome da disciplina.");
+      if (
+        state.disciplines.some(
+          (d) =>
+            d.name.toLocaleLowerCase("pt-BR") ===
+            name.toLocaleLowerCase("pt-BR"),
+        )
+      )
+        return toast("Essa disciplina já está cadastrada.");
+      state.disciplines.push({ id: uid(), name });
+      state.activeDisciplineId =
+        state.disciplines[state.disciplines.length - 1].id;
+      $("disciplineName").value = "";
+      await save();
+      render();
+      toast("Disciplina criada.");
+      return;
+    }
+    if (b.id === "addClass") {
+      const name = $("className").value.trim();
+      if (!state.activeDisciplineId)
+        return toast("Cadastre e selecione uma disciplina primeiro.");
+      if (!name) return toast("Digite o nome da turma.");
+      state.classes.push({
+        id: uid(),
+        disciplineId: state.activeDisciplineId,
+        name,
+        gradeMode: "sum",
+        maxGrade: 10,
+      });
+      $("className").value = "";
+      await save();
+      render();
+      toast("Turma criada.");
+      return;
+    }
+    if (b.dataset.addstudent) {
+      const row = b.parentElement,
+        inp = row?.querySelector("input[data-newstudent]"),
+        reg = row?.querySelector("input[data-reg]");
+      if (!inp || !reg)
+        return toast(
+          "Não encontrei os campos do aluno. Recarregue a página e tente novamente.",
+        );
+      const name = inp.value.trim(),
+        registration = reg.value.trim();
+      if (!name) return toast("Digite o nome do aluno.");
+      const newStudent = {
+        id: uid(),
+        classId: b.dataset.addstudent,
+        name,
+        registration,
+        qrToken: qrTokenForManual(registration, name, b.dataset.addstudent),
+      };
+      state.students.push(newStudent);
+      try {
+        await save();
+      } catch (err) {
+        state.students = state.students.filter((s) => s.id !== newStudent.id);
+        toast(err.message || "Não foi possível salvar o aluno.");
+        return;
+      }
+      render();
+      toast("Aluno cadastrado.");
+      return;
+    }
+    if (b.dataset.shareQr) {
+      const s = student(b.dataset.shareQr),
+        other = s && qrLinkCandidate(s);
+      if (!s || !other)
+        return toast(
+          "Não encontrei um único aluno correspondente para unificar.",
+        );
+      if (
+        !confirm(
+          "Unificar o QR de " +
+            s.name +
+            " com o cadastro da turma " +
+            (cls(other.classId)?.name || "") +
+            "? Os próximos crachás impressos usarão o mesmo código.",
+        )
+      )
+        return;
+      s.qrToken = other.qrToken || other.id;
+      await save();
+      render();
+      toast("QR do aluno unificado entre os cadastros.");
+      return;
+    }
+    if (b.dataset.delstudent) {
+      const s = student(b.dataset.delstudent);
+      if (!s) return;
+      if (
+        !confirm(
+          "Remover " +
+            s.name +
+            "? Os registros já salvos serão preservados no histórico.",
+        )
+      )
+        return;
+      state.students = state.students.filter((x) => x.id !== s.id);
+      await save();
+      render();
+      return;
+    }
+    if (b.dataset.status) {
+      await record(b.dataset.status);
+      return;
+    }
+    if (b.dataset.markPresence) {
+      await setAttendance(b.dataset.markPresence, b.dataset.presenceStatus);
+      return;
+    }
+    if (b.id === "startActionScan") {
+      startActionScanner("attendance");
+      return;
+    }
+    if (b.id === "startExitScan") {
+      startActionScanner("exit");
+      return;
+    }
+    if (b.id === "startOccurrenceScan") {
+      startActionScanner("occurrence");
+      return;
+    }
+    if (b.id === "startScan") {
+      startScanner();
+      return;
+    }
+    if (b.id === "saveOccurrence") {
+      const classId = $("occurrenceClass").value,
+        studentId = $("occurrenceStudent").value,
+        s = student(studentId),
+        category = $("occurrenceCategory").value;
+      if (!s || s.classId !== classId)
+        return toast("Selecione um aluno desta turma ou leia o crachá.");
+      const row = {
+        id: uid(),
+        classId,
+        studentId,
+        category,
+        notes: $("occurrenceNotes").value.trim(),
+        incidentDate: $("occurrenceDate").value || localDateKey(),
+        timestamp: new Date().toISOString(),
+      };
+      state.occurrences.push(row);
+      try {
+        await save();
+      } catch (err) {
+        state.occurrences = state.occurrences.filter((x) => x.id !== row.id);
+        toast(err.message || "Não foi possível salvar a ocorrência.");
+        return;
+      }
+      $("occurrenceNotes").value = "";
+      renderOccurrences();
+      renderAnotaHistory();
+      toast("Ocorrência registrada neste aparelho.");
+      return;
+    }
+    if (b.dataset.deleteOccurrence) {
+      const row = state.occurrences.find(
+        (x) => x.id === b.dataset.deleteOccurrence,
+      );
+      if (!row) return;
+      if (!confirm("Apagar esta ocorrência? Essa ação não pode ser desfeita."))
+        return;
+      state.occurrences = state.occurrences.filter((x) => x.id !== row.id);
+      try {
+        await save();
+      } catch (err) {
+        state.occurrences.push(row);
+        toast(err.message || "Não foi possível apagar o registro.");
+        return;
+      }
+      renderOccurrences();
+      renderAnotaHistory();
+      toast("Ocorrência apagada.");
+      return;
+    }
+    if (b.id === "exportAttendanceMonth") {
+      exportAttendanceMonth();
+      return;
+    }
+    if (b.id === "exportAnotaAttendanceHistory") {
+      $("attendanceHistoryClass").value = $("anotaHistoryClass").value;
+      $("attendanceHistoryMonth").value = $("anotaHistoryMonth").value;
+      exportAttendanceMonth();
+      return;
+    }
+    if (b.id === "saveGrade") {
+      const c = cls($("historyClass").value);
+      if (!c) return;
+      c.gradeMode = $("gradeMode").value;
+      c.maxGrade = Number($("maxGrade").value) || 10;
+      await save();
+      renderHistory();
+      toast("Cálculo salvo.");
+      return;
+    }
+    if (b.id === "printLabels") {
+      window.print();
+      return;
+    }
+    if (b.id === "downloadBackup") {
+      downloadBackup();
+      return;
+    }
+    if (b.id === "exportClass") {
+      exportClass();
+      return;
+    }
+    if (b.id === "clearAllData") {
+      await clearAllData();
+      return;
+    }
+    if (b.id === "downloadStudentTemplate") downloadStudentTemplate();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      closeAllCameras();
+      clearTimeout(hiddenLockTimer);
+      hiddenLockTimer = setTimeout(
+        () => lockApp().catch(() => {}),
+        5 * 60 * 1000,
+      );
+    } else {
+      clearTimeout(hiddenLockTimer);
+      resetIdleLock();
+    }
+  });
+  $("activeDiscipline").addEventListener("change", async () => {
+    const selected = $("activeDiscipline").value;
+    state.activeDisciplineId = state.disciplines.some((d) => d.id === selected)
+      ? selected
+      : "";
+    currentStudent = null;
+    $("studentResult").classList.add("hidden");
+    await closeAllCameras();
+    await save();
+    render();
+  });
+  $("actionClass").addEventListener("change", renderAttendancePanel);
+  $("actionDate").addEventListener("change", renderAttendancePanel);
+  $("exitClass").addEventListener("change", renderExitPanel);
+  $("occurrenceClass").addEventListener("change", renderOccurrences);
+  $("occurrenceStudent").addEventListener("change", renderOccurrences);
+  $("attendanceHistoryClass").addEventListener(
+    "change",
+    renderAttendanceHistory,
+  );
+  $("attendanceHistoryMonth").addEventListener(
+    "change",
+    renderAttendanceHistory,
+  );
+  $("anotaHistoryClass").addEventListener("change", renderAnotaHistory);
+  $("anotaHistoryMonth").addEventListener("change", renderAnotaHistory);
+  $("occurrenceDate").value = localDateKey();
+  $("actionDate").value = localDateKey();
+  $("attendanceHistoryMonth").value = localDateKey().slice(0, 7);
+  $("anotaHistoryMonth").value = localDateKey().slice(0, 7);
+  async function clearAllData() {
+    const hasData =
+      state.disciplines.length ||
+      state.classes.length ||
+      state.students.length ||
+      state.visits.length ||
+      state.attendance.length ||
+      state.exits.length ||
+      state.occurrences.length;
+    if (!hasData) return toast("Não há dados cadastrados para apagar.");
+    if (
+      !confirm(
+        "Isto apagará todas as disciplinas, turmas, alunos, vistos, chamadas, saídas e ocorrências deste navegador. A ação não pode ser desfeita. Se quiser guardar os registros, salve um backup completo. Continuar?",
+      )
+    )
+      return;
+    if (
+      (prompt("Para confirmar, digite APAGAR:") || "").trim().toUpperCase() !==
+      "APAGAR"
+    )
+      return toast("A limpeza foi cancelada.");
+    let dbRemoved = !window.indexedDB;
+    try {
+      if (window.indexedDB) {
+        try {
+          await deleteIndexedDatabase();
+          dbRemoved = true;
+        } catch (err) {
+          if (storageMode !== "localStorage") throw err;
+        }
+      }
+      localStorage.removeItem(LOCAL_STATE_KEY);
+      if (dbRemoved) localStorage.removeItem(RESET_MARKER_KEY);
+      else localStorage.setItem(RESET_MARKER_KEY, "1");
+      const profile = {
+        profileName: state.profileName,
+        onboardingComplete: state.onboardingComplete,
+        onboardingStep: "",
+        accessCount: state.accessCount,
+        activeProduct: state.activeProduct,
+      };
+      state = emptyState();
+      Object.assign(state, profile);
+      storageMode = dbRemoved
+        ? window.indexedDB
+          ? "indexedDB"
+          : "localStorage"
+        : "localStorage";
+      render();
+      updateStorageStatus();
+      toast(
+        dbRemoved
+          ? "Todos os dados foram apagados deste navegador."
+          : "Os dados alternativos foram apagados. O banco principal está indisponível e será ignorado até que possa ser removido.",
+      );
+    } catch (err) {
+      toast(
+        "Não foi possível concluir a limpeza. Feche outras abas do Vista Aí, faça backup e tente novamente.",
+      );
+    }
+  }
+  window.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    toast(
+      event.reason?.message ||
+        "Não foi possível salvar essa alteração. Verifique o armazenamento do navegador.",
+    );
+  });
+  async function startScanner() {
+    const c = cls($("scanClass").value),
+      activity = $("activity").value.trim();
+    if (!c) return toast("Cadastre e selecione uma turma.");
+    if (!activity) return toast("Informe a atividade antes de abrir a câmera.");
+    if (!window.Html5Qrcode)
+      return toast(
+        "O leitor não carregou. Recarregue o aplicativo e tente novamente.",
+      );
+    try {
+      if (!scanner) scanner = new Html5Qrcode("reader");
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        (decoded) => {
+          armCameraTimer("vista");
+          if (scanner?.isScanning) scanner.pause(true);
+          const token = decoded.trim(),
+            s = state.students.find(
+              (x) =>
+                x.classId === $("scanClass").value &&
+                (x.qrToken === token || x.id === token),
+            );
+          if (!s) {
+            $("scanMessage").textContent =
+              "Este QR Code não corresponde a um aluno da turma selecionada.";
+            setTimeout(() => scanner?.resume(), 900);
+            return;
+          }
+          currentStudent = s;
+          const discipline = state.disciplines.find(
+            (d) => d.id === c.disciplineId,
+          );
+          $("resultClass").textContent =
+            `${discipline?.name || ""} • ${c.name}`;
+          $("resultName").textContent = s.name;
+          $("resultId").textContent = s.registration
+            ? `Matrícula: ${s.registration}`
+            : "";
+          $("studentResult").classList.remove("hidden");
+          $("scanMessage").textContent =
+            "Escolha a situação da atividade. Depois, o leitor continua pronto para o próximo aluno.";
+        },
+        () => {},
+      );
+      armCameraTimer("vista");
+      $("scanMessage").textContent =
+        "Câmera ativa. Aponte para o QR Code do aluno.";
+    } catch (err) {
+      $("scanMessage").textContent =
+        "Não foi possível abrir a câmera. Verifique a permissão do Safari e abra o app pelo endereço HTTPS.";
+      toast("Falha ao abrir a câmera.");
+    }
+  }
+  async function stopScanner() {
+    clearTimeout(visitCameraTimer);
+    if (scanner) {
+      try {
+        await scanner.stop();
+      } catch {
+        try {
+          await scanner.clear();
+        } catch {}
+      }
+    }
+    if ($("scanMessage")) $("scanMessage").textContent = "Leitor fechado.";
+  }
+  async function record(status) {
+    if (!currentStudent) return;
+    const labels = {
+        feito: "Feito",
+        incompleto: "Incompleto",
+        nao_feito: "Não feito",
+      },
+      values = { feito: 1, incompleto: 0.5, nao_feito: 0 },
+      activity = $("activity").value.trim(),
+      visit = {
+        id: uid(),
+        classId: currentStudent.classId,
+        studentId: currentStudent.id,
+        activity,
+        status,
+        statusLabel: labels[status],
+        value: values[status],
+        timestamp: new Date().toISOString(),
+      };
+    state.visits.push(visit);
+    try {
+      await save();
+    } catch (err) {
+      state.visits = state.visits.filter((v) => v.id !== visit.id);
+      throw err;
+    }
+    $("studentResult").classList.add("hidden");
+    currentStudent = null;
+    $("scanMessage").textContent = "Visto registrado. Leia o próximo aluno.";
+    if (scanner?.isScanning) scanner.resume();
+    toast("Visto salvo.");
+  }
+  $("gradeMode").addEventListener("change", () => {
+    $("maxGradeWrap").classList.toggle(
+      "hidden",
+      $("gradeMode").value !== "scaled",
+    );
+  });
+  ["historyClass", "labelsClass"].forEach((id) =>
+    $(id).addEventListener("change", render),
+  );
+  $("historyClass").addEventListener("change", renderHistory);
+  $("labelsClass").addEventListener("change", renderLabels);
+  function parseCSV(text) {
+    const first = text.split(/\r?\n/, 1)[0],
+      sep =
+        (first.match(/;/g) || []).length > (first.match(/,/g) || []).length
+          ? ";"
+          : ",";
+    const rows = [];
+    let row = [],
+      cell = "",
+      q = false;
+    const pushCell = () => {
+      if (cell.length > 250)
+        throw Error(
+          "A planilha contém um campo muito longo. Limite cada célula a 250 caracteres.",
+        );
+      row.push(cell);
+      cell = "";
+      if (row.length > 20)
+        throw Error("A planilha pode ter no máximo 20 colunas.");
+    };
+    const pushRow = () => {
+      pushCell();
+      if (row.some((x) => String(x).trim())) rows.push(row);
+      if (rows.length > MAX_IMPORT_ROWS + 1)
+        throw Error("A planilha pode ter no máximo 5.000 alunos.");
+      row = [];
+    };
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '"' && q && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') q = !q;
+      else if (ch === sep && !q) pushCell();
+      else if ((ch === "\n" || ch === "\r") && !q) {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        pushRow();
+      } else {
+        cell += ch;
+        if (cell.length > 250)
+          throw Error(
+            "A planilha contém um campo muito longo. Limite cada célula a 250 caracteres.",
+          );
+      }
+    }
+    if (q)
+      throw Error(
+        "O CSV tem aspas sem fechamento. Corrija a planilha e tente novamente.",
+      );
+    if (cell || row.length) pushRow();
+    return rows;
+  }
+  function normalizeHeader(value) {
+    return String(value || "")
+      .trim()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("pt-BR");
+  }
+  function assertXlsxContainer(buffer) {
+    if (buffer.byteLength < 22) throw Error("O arquivo .xlsx está incompleto.");
+    const view = new DataView(buffer),
+      min = Math.max(0, buffer.byteLength - 65557);
+    let end = -1;
+    for (let i = buffer.byteLength - 22; i >= min; i--)
+      if (view.getUint32(i, true) === 0x06054b50) {
+        end = i;
+        break;
+      }
+    if (end < 0) throw Error("O arquivo não tem uma estrutura .xlsx válida.");
+    const disk = view.getUint16(end + 4, true),
+      diskEntries = view.getUint16(end + 8, true),
+      totalEntries = view.getUint16(end + 10, true),
+      directorySize = view.getUint32(end + 12, true),
+      directoryOffset = view.getUint32(end + 16, true);
+    if (
+      disk !== 0 ||
+      diskEntries !== totalEntries ||
+      totalEntries > 2000 ||
+      directoryOffset + directorySize > end
+    )
+      throw Error("A estrutura .xlsx excede os limites permitidos.");
+    let pos = directoryOffset,
+      totalUncompressed = 0;
+    for (let i = 0; i < totalEntries; i++) {
+      if (
+        pos + 46 > buffer.byteLength ||
+        view.getUint32(pos, true) !== 0x02014b50
+      )
+        throw Error("A estrutura .xlsx contém uma entrada inválida.");
+      const flags = view.getUint16(pos + 8, true),
+        method = view.getUint16(pos + 10, true),
+        compressed = view.getUint32(pos + 20, true),
+        uncompressed = view.getUint32(pos + 24, true),
+        nameLength = view.getUint16(pos + 28, true),
+        extraLength = view.getUint16(pos + 30, true),
+        commentLength = view.getUint16(pos + 32, true),
+        next = pos + 46 + nameLength + extraLength + commentLength;
+      if (
+        flags & 1 ||
+        ![0, 8].includes(method) ||
+        compressed === 0xffffffff ||
+        uncompressed === 0xffffffff ||
+        next > buffer.byteLength
+      )
+        throw Error(
+          "A planilha usa um formato compactado ou criptografado não permitido.",
+        );
+      totalUncompressed += uncompressed;
+      if (totalUncompressed > 20 * 1024 * 1024)
+        throw Error("A planilha descompactada excede 20 MB.");
+      if (uncompressed > Math.max(1024 * 1024, compressed * 1000))
+        throw Error("A planilha tem uma taxa de compactação incomum.");
+      pos = next;
+    }
+    if (pos > directoryOffset + directorySize)
+      throw Error("A estrutura .xlsx excede os limites permitidos.");
+  }
+  async function readXlsxRowsInWorker(file) {
+    if (!window.Worker)
+      throw Error(
+        "Este navegador não permite a leitura protegida da planilha. Use um navegador atualizado.",
+      );
+    const buffer = await file.arrayBuffer();
+    assertXlsxContainer(buffer);
+    const libraryUrl = new URL(
+        "./vendor/xlsx-0.20.3.full.min.js",
+        location.href,
+      ).href,
+      workerSource = `importScripts(${JSON.stringify(libraryUrl)});self.onmessage=({data})=>{try{const workbook=XLSX.read(data,{type:'array',cellFormula:false,cellHTML:false,cellStyles:false,bookVBA:false,bookFiles:false,WTF:false});if(!workbook.SheetNames.length||workbook.SheetNames.length>20)throw new Error('A planilha deve ter de 1 a 20 abas.');const sheet=workbook.Sheets[workbook.SheetNames[0]],range=XLSX.utils.decode_range(sheet['!ref']||'A1');if(range.e.r-range.s.r+1>5001||range.e.c>19)throw new Error('A primeira aba pode conter no máximo 5.000 alunos e 20 colunas.');const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',range:{s:{r:range.s.r,c:range.s.c},e:{r:range.e.r,c:range.e.c}}});self.postMessage({rows})}catch(error){self.postMessage({error:String(error?.message||'Não foi possível ler esta planilha.')})}}`;
+    const blobUrl = URL.createObjectURL(
+        new Blob([workerSource], { type: "text/javascript" }),
+      ),
+      worker = new Worker(blobUrl);
+    try {
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          worker.terminate();
+          reject(
+            new Error(
+              "A planilha demorou demais para abrir. Confira o arquivo e tente novamente.",
+            ),
+          );
+        }, 15000);
+        worker.onmessage = (e) => {
+          clearTimeout(timer);
+          if (e.data?.error) reject(new Error(e.data.error));
+          else resolve(e.data.rows);
+        };
+        worker.onerror = () => {
+          clearTimeout(timer);
+          reject(
+            new Error(
+              "Não foi possível ler essa planilha com segurança. Salve-a novamente como .xlsx.",
+            ),
+          );
+        };
+        worker.postMessage(buffer, [buffer]);
+      });
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(blobUrl);
+    }
+  }
+  async function readStudentRows(file) {
+    if (file.size > MAX_IMPORT_BYTES)
+      throw Error("O arquivo deve ter até 5 MB.");
+    if (/\.csv$/i.test(file.name)) {
+      const rows = parseCSV(await file.text());
+      if (rows.length > MAX_IMPORT_ROWS + 1)
+        throw Error("A planilha pode ter no máximo 5.000 alunos.");
+      return rows;
+    }
+    if (!/\.xlsx$/i.test(file.name))
+      throw Error("Use um arquivo .xlsx ou .csv.");
+    return readXlsxRowsInWorker(file);
+  }
+  function downloadStudentTemplate() {
+    if (!window.XLSX)
+      throw Error(
+        "A biblioteca local de planilhas não carregou. Atualize o aplicativo e tente novamente.",
+      );
+    const wb = XLSX.utils.book_new(),
+      students = XLSX.utils.aoa_to_sheet([["Nome", "Turma", "Matrícula"]]),
+      instructions = XLSX.utils.aoa_to_sheet([
+        ["Modelo para importar alunos no Vista Aí"],
+        ["Preencha uma linha para cada aluno."],
+        [
+          "Nome é obrigatório. Turma deve corresponder ao nome da turma cadastrada. Matrícula é opcional.",
+        ],
+        [
+          "Se Turma ficar vazia, o app usará a turma padrão selecionada na tela.",
+        ],
+      ]);
+    students["!cols"] = [{ wch: 32 }, { wch: 18 }, { wch: 22 }];
+    students["!autofilter"] = { ref: "A1:C1" };
+    instructions["!cols"] = [{ wch: 100 }];
+    XLSX.utils.book_append_sheet(wb, students, "Alunos");
+    XLSX.utils.book_append_sheet(wb, instructions, "Instruções");
+    XLSX.writeFile(wb, "modelo-alunos-vistaai.xlsx");
+  }
+  $("importFile").addEventListener("change", async (e) => {
+    const input = e.currentTarget,
+      f = input?.files?.[0],
+      fallbackClassId = $("importClass").value;
+    if (!f) return;
+    try {
+      const rows = await readStudentRows(f);
+      if (rows.length < 2)
+        throw Error("A planilha precisa de cabeçalho e pelo menos um aluno");
+      const heads = rows[0].map(normalizeHeader),
+        ni = heads.findIndex((x) => ["nome", "aluno", "estudante"].includes(x)),
+        ri = heads.findIndex((x) => ["matricula", "registro"].includes(x)),
+        ti = heads.findIndex((x) => ["turma", "classe"].includes(x));
+      if (ni < 0) throw Error("Não encontrei uma coluna “Nome” no cabeçalho");
+      if (rows[0].length > 20)
+        throw Error("A planilha pode ter no máximo 20 colunas.");
+      const classes = classesForActive(),
+        fallbackClass = classes.find((c) => c.id === fallbackClassId);
+      if (ti < 0 && !fallbackClass)
+        throw Error("Selecione uma turma de destino.");
+      const findClass = (name) =>
+        classes.find((c) => normalizeHeader(c.name) === normalizeHeader(name));
+      const prepared = [],
+        seen = new Set(
+          state.students.map((s) => `${s.classId}|${normalizeHeader(s.name)}`),
+        );
+      let duplicates = 0;
+      for (const r of rows.slice(1)) {
+        const name = String(r[ni] || "").trim();
+        if (!name) continue;
+        if (name.length > 120)
+          throw Error("Cada nome pode ter no máximo 120 caracteres.");
+        const className = ti >= 0 ? String(r[ti] || "").trim() : "";
+        if (className.length > 80)
+          throw Error("Cada nome de turma pode ter no máximo 80 caracteres.");
+        const targetClass = className ? findClass(className) : fallbackClass;
+        if (!targetClass)
+          throw Error(
+            `A turma “${className}” não foi encontrada nesta disciplina. Confira o nome ou deixe a célula vazia para usar a turma padrão.`,
+          );
+        const key = `${targetClass.id}|${normalizeHeader(name)}`;
+        if (seen.has(key)) {
+          duplicates++;
+          continue;
+        }
+        seen.add(key);
+        const registration = ri >= 0 ? String(r[ri] || "").trim() : "";
+        if (registration.length > 80)
+          throw Error("Cada matrícula pode ter no máximo 80 caracteres.");
+        prepared.push({
+          id: uid(),
+          classId: targetClass.id,
+          name,
+          registration,
+          qrToken: qrTokenForRegistration(),
+        });
+      }
+      if (!prepared.length)
+        throw Error(
+          duplicates
+            ? "Todos os alunos da planilha já estão cadastrados."
+            : "Não encontrei alunos com nome preenchido.",
+        );
+      const previous = state.students;
+      state.students = [...previous, ...prepared];
+      try {
+        await save();
+      } catch (err) {
+        state.students = previous;
+        throw err;
+      }
+      render();
+      $("importName").textContent = f.name;
+      toast(
+        `${prepared.length} aluno(s) importado(s).${duplicates ? ` ${duplicates} repetido(s) ignorado(s).` : ""}`,
+      );
+    } catch (err) {
+      toast(err.message || "Não foi possível importar a planilha.");
+    }
+    if (input) input.value = "";
+  });
+  function download(name, blob) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  async function shareEncryptedFile(name, encrypted, title) {
+    const blob = new Blob([JSON.stringify(encrypted, null, 2)], {
+      type: "application/json",
+    });
+    if (navigator.share && navigator.canShare) {
+      const file = new File([blob], name, { type: "application/json" });
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title });
+        } catch (err) {
+          if (err.name !== "AbortError") download(name, blob);
+        }
+        return;
+      }
+    }
+    download(name, blob);
+  }
+  async function downloadBackup() {
+    const day = localDateKey(),
+      name = `backup-vistaai-${day}.json`,
+      encrypted = await encryptEnvelope({
+        kind: "full-backup",
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        ...state,
+      });
+    await shareEncryptedFile(
+      name,
+      encrypted,
+      "Backup criptografado do Vista Aí",
+    );
+  }
+  function assertRecordId(value, label) {
+    if (typeof value !== "string" || !value.trim() || value.length > 120)
+      throw Error(
+        "O arquivo contém um identificador inválido (" + label + ").",
+      );
+  }
+  function assertText(value, max, label, required = false) {
+    if (
+      typeof value !== "string" ||
+      (required && !value.trim()) ||
+      value.length > max
+    )
+      throw Error("O arquivo contém um campo inválido (" + label + ").");
+  }
+  function assertUniqueIds(rows, label) {
+    const ids = new Set();
+    for (const row of rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row))
+        throw Error("O arquivo contém um registro inválido (" + label + ").");
+      assertRecordId(row.id, label);
+      if (ids.has(row.id))
+        throw Error(
+          "O arquivo contém identificadores repetidos (" + label + ").",
+        );
+      ids.add(row.id);
+    }
+    return ids;
+  }
+  function validateAppData(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data))
+      throw Error("O arquivo não contém dados válidos.");
+    for (const key of [
+      "disciplines",
+      "classes",
+      "students",
+      "visits",
+      "attendance",
+      "exits",
+      "occurrences",
+    ])
+      if (!Array.isArray(data[key]))
+        throw Error("O arquivo está incompleto (" + key + ").");
+    const limits = {
+      disciplines: 100,
+      classes: 500,
+      students: 20000,
+      visits: 1000000,
+      attendance: 500000,
+      exits: 500000,
+      occurrences: 500000,
+    };
+    for (const key of Object.keys(limits))
+      if (data[key].length > limits[key])
+        throw Error("O arquivo excede o limite de registros de " + key + ".");
+    const disciplines = assertUniqueIds(data.disciplines, "disciplina"),
+      classes = assertUniqueIds(data.classes, "turma"),
+      students = assertUniqueIds(data.students, "aluno"),
+      studentClasses = new Map(data.students.map((x) => [x.id, x.classId]));
+    for (const d of data.disciplines)
+      assertText(d.name, 100, "nome da disciplina", true);
+    for (const c of data.classes) {
+      assertText(c.name, 80, "nome da turma", true);
+      if (c.disciplineId && !disciplines.has(c.disciplineId))
+        throw Error("Uma turma aponta para uma disciplina inexistente.");
+    }
+    for (const x of data.students) {
+      assertRecordId(x.classId, "turma do aluno");
+      if (!classes.has(x.classId))
+        throw Error("Um aluno aponta para uma turma inexistente.");
+      assertText(x.name, 120, "nome do aluno", true);
+      assertText(String(x.registration || ""), 80, "matrícula");
+      assertText(String(x.qrToken || x.id), 120, "QR do aluno");
+    }
+    const validDate = (value) =>
+        typeof value === "string" &&
+        value.length <= 40 &&
+        Number.isFinite(Date.parse(value)),
+      eventIds = {
+        visits: new Set(),
+        attendance: new Set(),
+        exits: new Set(),
+        occurrences: new Set(),
+      };
+    const checkEvent = (x, label, key) => {
+      if (!x || typeof x !== "object" || Array.isArray(x))
+        throw Error("O arquivo contém registro inválido (" + label + ").");
+      assertRecordId(x.id, label);
+      if (eventIds[key].has(x.id))
+        throw Error("O arquivo contém registros repetidos (" + label + ").");
+      eventIds[key].add(x.id);
+      assertRecordId(x.classId, "turma do " + label);
+      assertRecordId(x.studentId, "aluno do " + label);
+      if (
+        !classes.has(x.classId) ||
+        (students.has(x.studentId) &&
+          studentClasses.get(x.studentId) !== x.classId)
+      )
+        throw Error(
+          "Um registro aponta para aluno ou turma incorretos (" + label + ").",
+        );
+    };
+    for (const x of data.visits) {
+      checkEvent(x, "visto", "visits");
+      if (!validDate(x.timestamp)) throw Error("Um visto tem data inválida.");
+      assertText(String(x.activity || ""), 200, "atividade");
+      if (
+        !["feito", "incompleto", "nao_feito"].includes(x.status) ||
+        ![0, 0.5, 1].includes(Number(x.value))
+      )
+        throw Error("Um visto tem situação ou nota inválida.");
+    }
+    for (const x of data.attendance) {
+      checkEvent(x, "chamada", "attendance");
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(x.dateKey || "")) ||
+        !validDate(x.timestamp) ||
+        !["present", "absent"].includes(x.status)
+      )
+        throw Error("Uma chamada tem dados inválidos.");
+    }
+    for (const x of data.exits) {
+      checkEvent(x, "saída", "exits");
+      if (
+        !validDate(x.departureAt) ||
+        (x.returnAt !== null &&
+          x.returnAt !== undefined &&
+          !validDate(x.returnAt))
+      )
+        throw Error("Uma saída tem horários inválidos.");
+    }
+    for (const x of data.occurrences) {
+      checkEvent(x, "ocorrência", "occurrences");
+      assertText(String(x.category || ""), 100, "categoria");
+      assertText(String(x.notes || ""), 1000, "anotação");
+      if (
+        !validDate(x.timestamp) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(x.incidentDate || ""))
+      )
+        throw Error("Uma ocorrência tem data inválida.");
+    }
+    return true;
+  }
+  function localDateKey(date = new Date()) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  async function exportDay() {
+    const day = $("dailyDate").value || localDateKey(),
+      visits = state.visits.filter(
+        (v) => localDateKey(new Date(v.timestamp)) === day,
+      ),
+      attendance = state.attendance.filter((x) => x.dateKey === day),
+      exits = state.exits.filter(
+        (x) =>
+          localDateKey(new Date(x.departureAt)) === day ||
+          (x.returnAt && localDateKey(new Date(x.returnAt)) === day),
+      ),
+      occurrences = state.occurrences.filter(
+        (x) => localDateKey(new Date(x.timestamp)) === day,
+      ),
+      events = [...visits, ...attendance, ...exits, ...occurrences],
+      classIds = new Set(events.map((x) => x.classId)),
+      studentIds = new Set(events.map((x) => x.studentId)),
+      classes = state.classes.filter((c) => classIds.has(c.id)),
+      disciplineIds = new Set(classes.map((c) => c.disciplineId)),
+      packet = {
+        kind: "daily-transfer",
+        format: "vistos-historia-dia",
+        version: 5,
+        date: day,
+        exportedAt: new Date().toISOString(),
+        disciplines: state.disciplines.filter((d) => disciplineIds.has(d.id)),
+        classes,
+        students: state.students.filter((student) =>
+          studentIds.has(student.id),
+        ),
+        visits,
+        attendance,
+        exits,
+        occurrences,
+      };
+    await shareEncryptedFile(
+      "vistos-" + day + ".json",
+      await encryptEnvelope(packet),
+      "Transferência diária criptografada",
+    );
+    toast(
+      visits.length +
+        " visto(s), " +
+        attendance.length +
+        " chamada(s), " +
+        exits.length +
+        " saída(s) e " +
+        occurrences.length +
+        " ocorrência(s) incluídas no arquivo.",
+    );
+  }
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#exportDay")) exportDay();
+  });
+  $("dailyDate").value = localDateKey();
+  $("dailyImportFile").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const previous = JSON.parse(JSON.stringify(state));
+    try {
+      if (f.size > MAX_BACKUP_BYTES)
+        throw Error("O arquivo deve ter até 20 MB.");
+      let packet = JSON.parse(await f.text());
+      if (packet.format === SECURE_FORMAT) {
+        const password = await requestFilePassword(
+          "Importar transferência diária",
+          "Digite a senha usada para criptografar o arquivo exportado no celular ou tablet.",
+        );
+        if (password === null) {
+          e.target.value = "";
+          return;
+        }
+        packet = (await decryptEnvelope(packet, password)).data;
+      } else if (
+        !confirm(
+          "Este arquivo diário está sem criptografia. Ele pode conter dados escolares legíveis. Deseja importá-lo mesmo assim?",
+        )
+      ) {
+        e.target.value = "";
+        return;
+      }
+      if (
+        packet.format !== "vistos-historia-dia" ||
+        !Array.isArray(packet.classes) ||
+        !Array.isArray(packet.students) ||
+        !Array.isArray(packet.visits)
+      )
+        throw Error("Este não é um arquivo diário válido do app.");
+      for (const key of ["attendance", "exits", "occurrences"])
+        if (packet[key] !== undefined && !Array.isArray(packet[key]))
+          throw Error(
+            "O arquivo diário contém uma lista de registros inválida.",
+          );
+      packet.attendance = packet.attendance || [];
+      packet.exits = packet.exits || [];
+      packet.occurrences = packet.occurrences || [];
+      if (
+        packet.classes.length > 500 ||
+        packet.students.length > 20000 ||
+        packet.visits.length > 100000 ||
+        packet.attendance.length > 100000 ||
+        packet.exits.length > 100000 ||
+        packet.occurrences.length > 100000
+      )
+        throw Error(
+          "O arquivo contém mais registros do que o limite permitido.",
+        );
+      const packetDisciplines =
+        Array.isArray(packet.disciplines) && packet.disciplines.length
+          ? packet.disciplines
+          : packet.classes.length
+            ? [{ id: DEFAULT_DISCIPLINE_ID, name: "História" }]
+            : [];
+      packet.disciplines = packetDisciplines;
+      packet.classes = packet.classes.map((c) => ({
+        ...c,
+        disciplineId:
+          c.disciplineId || packetDisciplines[0]?.id || DEFAULT_DISCIPLINE_ID,
+      }));
+      validateAppData(packet);
+      for (const d of packetDisciplines) {
+        const existing = state.disciplines.find((x) => x.id === d.id);
+        if (existing) existing.name = d.name;
+        else state.disciplines.push(d);
+      }
+      const classMap = new Map(packet.classes.map((c) => [c.id, c])),
+        studentMap = new Map(packet.students.map((x) => [x.id, x]));
+      for (const incoming of classMap.values()) {
+        const existing = cls(incoming.id);
+        if (existing) {
+          existing.name = incoming.name;
+          existing.disciplineId = incoming.disciplineId;
+        } else
+          state.classes.push({
+            ...incoming,
+            gradeMode: incoming.gradeMode || "sum",
+            maxGrade: Number(incoming.maxGrade) || 10,
+          });
+      }
+      for (const incoming of studentMap.values()) {
+        const existing = student(incoming.id);
+        if (existing) {
+          existing.classId = incoming.classId;
+          existing.name = incoming.name;
+          existing.registration = incoming.registration || "";
+          existing.qrToken =
+            incoming.qrToken || existing.qrToken || existing.id;
+        } else
+          state.students.push({
+            ...incoming,
+            registration: incoming.registration || "",
+            qrToken: incoming.qrToken || incoming.id,
+          });
+      }
+      const existingVisits = new Set(state.visits.map((v) => v.id));
+      let added = 0;
+      for (const v of packet.visits) {
+        if (existingVisits.has(v.id)) continue;
+        state.visits.push(v);
+        existingVisits.add(v.id);
+        added++;
+      }
+      for (const incoming of packet.attendance) {
+        const existing = state.attendance.find((x) => x.id === incoming.id);
+        if (existing) {
+          existing.status = incoming.status;
+          existing.timestamp = incoming.timestamp;
+        } else state.attendance.push(incoming);
+      }
+      for (const incoming of packet.exits) {
+        const existing = state.exits.find((x) => x.id === incoming.id);
+        if (existing) {
+          if (incoming.returnAt) existing.returnAt = incoming.returnAt;
+        } else state.exits.push(incoming);
+      }
+      for (const incoming of packet.occurrences)
+        if (!state.occurrences.some((x) => x.id === incoming.id))
+          state.occurrences.push(incoming);
+      state = normalizeState(state);
+      await save();
+      render();
+      toast(
+        added +
+          " visto(s) importado(s); os demais registros também foram atualizados.",
+      );
+    } catch (err) {
+      state = previous;
+      render();
+      toast(err.message || "Não foi possível importar o arquivo diário.");
+    }
+    e.target.value = "";
+  });
+  $("restoreFile").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const previous = JSON.parse(JSON.stringify(state));
+    try {
+      if (f.size > MAX_BACKUP_BYTES)
+        throw Error("O arquivo deve ter até 20 MB.");
+      let data = JSON.parse(await f.text());
+      if (data.format === SECURE_FORMAT) {
+        const password = await requestFilePassword(
+          "Restaurar backup criptografado",
+          "Digite a senha usada ao salvar esse backup.",
+        );
+        if (password === null) {
+          e.target.value = "";
+          return;
+        }
+        data = (await decryptEnvelope(data, password)).data;
+      } else if (
+        !confirm(
+          "Este backup está sem criptografia e pode conter dados escolares legíveis. Importá-lo grava uma cópia criptografada neste aparelho, mas não protege o arquivo original. Deseja continuar?",
+        )
+      ) {
+        e.target.value = "";
+        return;
+      }
+      if (
+        !data ||
+        !Array.isArray(data.classes) ||
+        !Array.isArray(data.students) ||
+        !Array.isArray(data.visits)
+      )
+        throw Error("O arquivo não contém os dados esperados.");
+      if (
+        data.classes.length > 500 ||
+        data.students.length > 20000 ||
+        data.visits.length > 1000000 ||
+        data.attendance?.length > 500000 ||
+        data.exits?.length > 500000 ||
+        data.occurrences?.length > 500000
+      )
+        throw Error(
+          "O backup contém mais registros do que o limite permitido.",
+        );
+      const normalized = normalizeState(data);
+      validateAppData(normalized);
+      if (
+        !confirm(
+          "Restaurar este arquivo vai substituir todos os dados deste aparelho. Continuar?",
+        )
+      )
+        return;
+      state = normalized;
+      try {
+        await save();
+      } catch (err) {
+        state = previous;
+        throw err;
+      }
+      render();
+      toast("Backup restaurado e protegido neste aparelho.");
+    } catch (err) {
+      state = previous;
+      toast(err.message || "Arquivo de backup inválido.");
+    }
+    e.target.value = "";
+  });
+  function exportAttendanceMonth() {
+    const id = $("attendanceHistoryClass").value,
+      month = $("attendanceHistoryMonth").value,
+      c = cls(id);
+    if (!c || !month) return toast("Selecione turma e mês.");
+    if (!window.XLSX) return toast("A biblioteca Excel não carregou.");
+    const discipline = state.disciplines.find((d) => d.id === c.disciplineId),
+      rows = state.attendance
+        .filter(
+          (x) => x.classId === id && String(x.dateKey || "").startsWith(month),
+        )
+        .sort(
+          (a, b) =>
+            a.dateKey.localeCompare(b.dateKey) ||
+            String(student(a.studentId)?.name || "").localeCompare(
+              String(student(b.studentId)?.name || ""),
+              "pt-BR",
+            ),
+        )
+        .map((x) => ({
+          Disciplina: discipline?.name || "",
+          Turma: c.name,
+          Mês: month,
+          Data: x.dateKey,
+          Aluno: student(x.studentId)?.name || "Aluno removido",
+          Matrícula: student(x.studentId)?.registration || "",
+          Situação: x.status === "present" ? "Presente" : "Ausente",
+          Horário: x.timestamp
+            ? new Date(x.timestamp).toLocaleTimeString("pt-BR")
+            : "",
+        }));
+    if (!rows.length) return toast("Não há chamadas neste mês para exportar.");
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(rows),
+      "Chamadas",
+    );
+    const slug = (x) =>
+      String(x || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\p{L}\p{N}-]+/gu, "-");
+    XLSX.writeFile(
+      wb,
+      `chamadas-${slug(discipline?.name)}-${slug(c.name)}-${month}.xlsx`,
+    );
+    toast("Arquivo Excel das chamadas preparado.");
+  }
+  function exportClass() {
+    const id = $("historyClass").value,
+      c = cls(id);
+    if (!c) return toast("Selecione uma turma.");
+    if (!window.XLSX) return toast("A biblioteca Excel não carregou.");
+    const discipline = state.disciplines.find((d) => d.id === c.disciplineId),
+      mode = c.gradeMode || "sum",
+      people = state.students
+        .filter((s) => s.classId === id)
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    const sumRows = people.map((s) => ({
+      Disciplina: discipline?.name || "",
+      Turma: c.name,
+      Aluno: s.name,
+      Matrícula: s.registration || "",
+      Quantidade_de_vistos: state.visits.filter(
+        (v) => v.classId === id && v.studentId === s.id,
+      ).length,
+      Pontuação: score(mode, c, s.id),
+      Cálculo:
+        mode === "sum"
+          ? "Soma dos pontos"
+          : mode === "average"
+            ? "Média dos vistos"
+            : "Percentual convertido",
+      Nota_máxima: mode === "scaled" ? c.maxGrade : "",
+    }));
+    const visitRows = state.visits
+      .filter((v) => v.classId === id)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .map((v) => ({
+        Disciplina: discipline?.name || "",
+        Turma: c.name,
+        Aluno: student(v.studentId)?.name || "Aluno removido",
+        Matrícula: student(v.studentId)?.registration || "",
+        Atividade: v.activity,
+        Situação: v.statusLabel,
+        Pontos: v.value,
+        Data: new Date(v.timestamp).toLocaleString("pt-BR"),
+      }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(sumRows),
+      "Resultados",
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(visitRows),
+      "Vistos",
+    );
+    const slug = (x) =>
+      String(x || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\p{L}\p{N}-]+/gu, "-");
+    XLSX.writeFile(wb, `vistos-${slug(discipline?.name)}-${slug(c.name)}.xlsx`);
+  }
+  prepareApp().catch((err) => {
+    configureGate("setup");
+    $("privacyError").textContent =
+      err.message || "Não foi possível preparar o armazenamento seguro.";
+  });
 })();
