@@ -1,2 +1,2 @@
 # The application script is maintained source code, not generated output.
-app.js -linguist-generated
+app.js linguist-language=JavaScript -linguist-generated
