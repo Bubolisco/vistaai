@@ -1,15 +1,9 @@
 # Sobre o uso de inteligência artificial
 
-O projeto **Vista Aí e Anota Aí** nasceu da necessidade de um professor do Ensino Básico que queria uma forma rápida, simples e gratuita de registrar os vistos das atividades dos alunos. O idealizador, SrBubolisco, não sabe programação. Por isso, usou ferramentas de inteligência artificial como apoio para planejar e desenvolver o aplicativo e preparar sua documentação.
+O **Educa Aí** nasceu da necessidade de um professor da rede básica de ensino que queria ferramentas simples e gratuitas para organizar os vistos e outros registros da rotina escolar. O idealizador, SrBubolisco, não é programador e usa ferramentas de inteligência artificial como apoio para planejar, desenvolver e documentar o projeto.
 
-As logos dos mascotes do Vista Aí e do Anota Aí também foram feitas com ajuda de inteligência artificial.
+As logos dos mascotes do Educa Aí, Vista Aí e Anota Aí também foram criadas com ajuda de inteligência artificial.
 
-O foco do projeto é facilitar a vida de professores. A proposta é manter uma ferramenta gratuita e de código aberto, com recursos simples para organizar vistos, chamadas, saídas e ocorrências escolares.
+O projeto é gratuito, de código aberto e está em desenvolvimento. Até hoje, foi usado somente pelo idealizador; ainda não foi testado por outros professores nem validado para uso em larga escala. As mudanças são feitas gradualmente para que possam ser avaliadas antes de ampliar o uso.
 
-## Estado do projeto
-
-O aplicativo está em desenvolvimento e testes. Até hoje, foi utilizado apenas pelo idealizador; ainda não foi testado por outros professores nem validado para uso em larga escala. As mudanças são feitas de forma gradual para que possam ser experimentadas antes de ampliar a utilização.
-
-## Contribuições
-
-Estamos abertos a contribuições. Sugestões, relatos de problemas, ideias, experiências de sala de aula, acessibilidade e melhorias no código são bem-vindos. O que puder ser melhorado será recebido com abertura; não é necessário programar para contribuir.
+Sugestões, relatos de problemas, ideias de acessibilidade e melhorias no código são bem-vindos. Não é necessário programar para contribuir.

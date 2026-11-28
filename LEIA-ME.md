@@ -1,47 +1,48 @@
-# Como usar o Vista Aí e o Anota Aí
+# Como usar o Educa Aí
 
-O **Vista Aí** registra vistos de atividades e resultados. O **Anota Aí** organiza chamada, saídas de sala e ocorrências. Os dois funcionam no navegador do celular, tablet ou computador, usando os cadastros deste aparelho.
+O **Educa Aí** reúne o **Vista Aí** (vistos de atividades) e o **Anota Aí** (chamada, saídas e ocorrências). A versão atual é gratuita, está em desenvolvimento e funciona no navegador.
 
 ## Primeiro acesso
 
-1. Informe um nome para exibição neste aparelho e crie uma senha com pelo menos 14 caracteres. Confirme a senha. Ela protege os dados e os backups; não é enviada para a internet e não pode ser recuperada.
-2. Cadastre pelo menos uma disciplina. É possível adicionar outras nessa etapa ou depois, em **Turmas e alunos**.
-3. Leia a apresentação do Vista Aí e do Anota Aí.
-4. Veja as opções de apoio. A contribuição é opcional: o aplicativo é gratuito e continua gratuito. Toque em **Continuar gratuitamente** ou **Agora não** para seguir.
-5. Escolha qual área deseja abrir. Nos próximos acessos, informe a senha e escolha Vista Aí ou Anota Aí. O lembrete de apoio pode aparecer a cada dez acessos e pode ser fechado.
+1. Leia a apresentação do projeto e escolha **Uso individual**. O **Uso escolar** está em planejamento e ainda não sincroniza dados.
+2. Digite o nome que quer usar neste aparelho e crie uma senha com pelo menos 14 caracteres. Este perfil é local, não é uma conta on-line.
+3. Guarde a **chave de recuperação** mostrada na tela. Ela permite abrir o cofre e criar uma nova senha se esquecer a atual. Anote-a em papel ou guarde-a em local seguro. Quem tiver a chave poderá abrir seus dados. Se baixar o arquivo oferecido pelo aplicativo, lembre-se de que ele contém a chave sem criptografia.
+4. Cadastre pelo menos uma disciplina.
+5. Conheça o Vista Aí e o Anota Aí. A contribuição para manter o projeto é opcional; é possível continuar gratuitamente.
+6. Escolha qual ferramenta quer abrir. Nos próximos acessos, digite a senha ou use uma passkey compatível e escolha Vista Aí ou Anota Aí.
 
-## Organizar alunos e imprimir os códigos
+Se esquecer a senha, escolha **Usar chave de recuperação** na tela de entrada e depois defina outra senha. Se perder a senha e a chave, os dados criptografados não poderão ser recuperados.
 
-1. Selecione uma disciplina no alto da página.
+## Desbloqueio com passkey
+
+Em **Backup**, escolha **Ativar passkey** para tentar configurar o desbloqueio com Face ID, digital ou código do aparelho. A passkey é opcional e depende do suporte do dispositivo, navegador e gerenciador de credenciais. Se não funcionar, continue usando a senha e a chave de recuperação. O sistema operacional ou gerenciador de passkeys pode sincronizar a credencial conforme as configurações do usuário; os dados do aplicativo permanecem locais.
+
+## Organizar alunos e imprimir QR Codes
+
+1. Selecione uma disciplina no alto da tela.
 2. Abra **Turmas e alunos** e crie suas turmas.
-3. Cadastre os alunos manualmente ou importe uma planilha Excel/CSV. O **Baixar Modelo** traz as colunas `Nome`, `Turma` e `Matrícula` (opcional). Os nomes das turmas na planilha devem corresponder aos cadastrados no aplicativo.
-4. Em **QR Codes**, escolha uma turma e imprima as etiquetas. O código é aleatório e não mostra nome ou matrícula. O QR do crachá pode ser compartilhado entre cadastros somente quando o professor confirmar que se trata do mesmo aluno.
+3. Cadastre alunos manualmente ou importe uma planilha Excel/CSV. O **Baixar Modelo** inclui `Nome`, `Turma` e `Matrícula` opcional. Os nomes das turmas na planilha devem corresponder aos cadastrados.
+4. Em **QR Codes**, escolha uma turma e imprima as etiquetas. O código é aleatório e não inclui nome ou matrícula.
 
 ## Vista Aí: registrar vistos
 
-1. Abra **Dar visto**, escolha a turma e informe a atividade ou página.
-2. Leia o QR Code do aluno com a câmera.
-3. Marque **Feito** (1 ponto), **Incompleto** (0,5 ponto) ou **Não feito** (0 ponto).
-4. Em **Histórico**, consulte os registros e resultados. É possível configurar soma, média ou conversão para uma nota máxima e exportar a turma para Excel.
+1. Abra **Dar visto**, selecione turma e atividade ou página.
+2. Leia o QR Code do aluno.
+3. Marque **Feito** (1 ponto), **Incompleto** (0,5) ou **Não feito** (0 ponto).
+4. Em **Histórico**, consulte os vistos e resultados. É possível escolher soma, média ou conversão para uma nota máxima e exportar os dados para Excel.
 
 ## Anota Aí: chamada, saídas e ocorrências
 
-- Em **Presença**, escolha a turma e a data. Marque cada aluno como **Presente** ou **Ausente**, ou leia os QR Codes para registrar presença. A lista manual começa recolhida. Abra **Histórico** para filtrar as chamadas por turma e mês e exportar para Excel.
-- Em **Saídas de sala**, selecione a turma e leia o crachá quando o aluno sair e quando voltar. A primeira leitura registra a saída; a seguinte registra o retorno e o tempo fora.
-- Em **Ocorrências**, escolha a turma e o aluno (ou leia o QR do crachá), selecione uma categoria e, se necessário, escreva uma anotação objetiva. O registro fica criptografado com os demais dados locais.
+- **Presença:** escolha a turma e a data. Marque cada aluno como presente ou ausente manualmente, ou leia o QR Code. Abra o histórico para filtrar por turma e mês e exportar a chamada para Excel.
+- **Saídas de sala:** selecione a turma e leia o crachá na saída e no retorno. A primeira leitura registra a saída; a segunda, o retorno e o tempo fora.
+- **Ocorrências:** selecione aluno ou leia o QR, escolha uma categoria e registre apenas informações necessárias e objetivas.
 
-O leitor fecha sozinho depois de 60 segundos sem leitura e quando você troca de aba ou deixa o aplicativo em segundo plano. A câmera só funciona em endereço HTTPS e após a permissão do navegador.
+O leitor de câmera fecha após 60 segundos sem leitura ou quando você troca de aba. A câmera exige HTTPS e autorização do navegador.
 
-## Histórico e cópias de segurança
+## Backup e privacidade
 
-**Histórico** mostra os vistos e resultados no Vista Aí. No Anota Aí, mostra chamadas, saídas e ocorrências para a turma e o mês selecionados.
+Em **Backup**, salve um arquivo completo criptografado com sua senha ou chave de recuperação. A restauração completa substitui os dados do aparelho de destino. A transferência diária adiciona registros sem apagar os dados do aparelho de origem.
 
-Em **Backup**, salve um arquivo completo criptografado com sua senha ou exporte os registros do dia. A transferência diária pode ser importada em outro aparelho ou computador; ela acrescenta os registros ao histórico e não apaga os dados de origem. O backup completo restaura todo o banco e substitui os dados existentes no navegador de destino.
+Os dados do Uso individual ficam no armazenamento deste navegador e aparelho; não há sincronização automática. Faça backups com frequência. Limpar os dados do site ou usar navegação privada pode apagar o banco. Planilhas Excel exportadas são legíveis; guarde-as com cuidado.
 
-Os dados ficam no armazenamento deste navegador e aparelho. Não há sincronização automática nem conta on-line. Salve backups com frequência e guarde a senha separada dos arquivos. Limpar os dados do site ou usar navegação privada pode apagar o banco local. Planilhas Excel exportadas para consulta contêm informações legíveis; guarde-as com cuidado.
-
-## Usar no celular, tablet ou computador
-
-Abra o endereço oficial: [vistaaiedu.com.br](https://vistaaiedu.com.br/). No iPhone/iPad, use Safari; no Android, use Chrome. Para acesso como atalho, use **Adicionar à Tela de Início** no menu do navegador. No computador, abra o mesmo endereço em um navegador compatível.
-
-O aplicativo está em desenvolvimento e testes. Até o momento, foi usado somente pelo idealizador e ainda não foi validado por outros professores nem em larga escala.
+O projeto está em desenvolvimento e testes. Até agora, foi usado somente pelo idealizador e ainda não foi validado por outros professores nem em larga escala.

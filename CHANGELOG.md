@@ -1,13 +1,22 @@
 # Histórico de versões
 
-## 1.7 — Proteção e bibliotecas locais
+## 1.7 — Educa Aí • modo individual
 
-- Removeu carregamento das bibliotecas do leitor de QR, gerador de QR e planilhas por CDNs; os arquivos agora fazem parte do site e ficam disponíveis offline.
-- Atualizou a biblioteca SheetJS para a versão oficial 0.20.3 e manteve a leitura de Excel em worker isolado, com limites de tamanho, registros, expansão e tempo.
-- Manteve CSV e validação de campos no próprio aplicativo.
-- Reforçou a política de segurança do conteúdo, bloqueou scripts inline e removeu montagem dinâmica de conteúdo de alunos como HTML.
-- Aumentou a derivação PBKDF2 para 600.000 iterações para novos bancos e atualizou bancos antigos ao desbloquear.
-- Acrescentou a política de relato privado de falhas e ampliou a relação de licenças de bibliotecas.
-- Atualizou o cache offline para instalar a versão 1.7.
+- Reúne Vista Aí e Anota Aí sob o nome Educa Aí.
+- Adiciona a apresentação inicial, escolha entre Uso individual e Uso escolar e configuração guiada do perfil local. O Uso escolar é identificado como planejado e permanece desativado.
+- Cria um cofre local criptografado com senha e chave aleatória de recuperação. A chave permite abrir o cofre e definir outra senha.
+- Mantém compatibilidade de leitura com cofres locais da versão anterior e os atualiza para o novo formato depois do desbloqueio.
+- Adiciona passkey opcional para desbloqueio rápido quando navegador, aparelho e gerenciador de credenciais oferecem WebAuthn com a extensão PRF. A senha e a chave de recuperação continuam como alternativas.
+- Atualiza as marcas, cores, ícones do navegador e ícones de instalação do Educa Aí.
+- Mantém o uso gratuito e a contribuição voluntária opcional.
 
-A atualização foi revisada estaticamente e os arquivos JavaScript passaram por verificação de sintaxe. Não foi feito teste de invasão independente.
+### Base técnica incorporada à versão 1.7
+
+- Inclui localmente as bibliotecas do leitor de QR, do gerador de QR e de planilhas, com versões e licenças listadas em `vendor/DEPENDENCIES.md`.
+- Mantém a leitura de Excel em worker isolado, com limites para tamanho, registros, expansão e tempo.
+- Aplica a política de segurança de conteúdo e evita reinterpretar texto de alunos como HTML.
+- Mantém backups criptografados, chamadas, saídas/retornos, ocorrências e históricos no armazenamento local.
+
+## Estado desta publicação
+
+Esta publicação é uma atualização de desenvolvimento. O projeto ainda não foi testado por outros professores nem validado para uso em larga escala. O desbloqueio por passkey depende de suporte específico de navegador, sistema operacional e gerenciador de credenciais; senha e chave de recuperação permanecem disponíveis.
