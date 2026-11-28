@@ -33,6 +33,19 @@ O navegador e o sistema operacional podem solicitar Face ID, digital, PIN ou có
 
 O perfil individual é local e não tem autenticação de dois fatores nem redefinição remota de senha. A recuperação depende da chave que o usuário guardou. A conta que hospeda o site não consegue recuperar o conteúdo criptografado.
 
+## Revisão adicional após ajustes de interface e favicon — 28 de novembro de 2026
+
+Foi feita uma nova leitura estática de `index.html`, `app.js`, `security.js`, `password-tools.js`, `sw.js`, `manifest.webmanifest` e do inventário de dependências.
+
+- A sugestão de senha usa `crypto.getRandomValues`, gera 24 caracteres e garante caracteres de diferentes grupos. Não usa serviço externo, não grava a sugestão em armazenamento, permite mostrar/ocultar os campos e limpa os campos quando a tela de acesso muda. A senha só entra no fluxo normal de criação/alteração da senha do cofre.
+- O novo `password-tools.js` é servido do próprio repositório e foi incluído no cache offline. A chave do cache do service worker foi alterada para que o navegador não continue usando a versão antiga dos arquivos.
+- O cabeçalho agora mostra apenas os mascotes Vista Aí e Anota Aí. O favicon, o ícone da tela inicial e os ícones PWA foram derivados do arquivo de mascote fornecido pelo idealizador, sem o texto do logotipo e com canal transparente.
+- Na revisão do código próprio, não foram encontrados usos de `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval` ou `new Function`. Os links externos do aplicativo são as opções do Mercado Pago, abertas por escolha da pessoa e com `noopener noreferrer`.
+- O aplicativo não integra DNS de terceiros, telemetria ou API remota. O service worker atende somente requisições GET da própria origem; a resolução DNS do domínio continua sendo responsabilidade da configuração do domínio e da rede do visitante.
+- As dependências incluídas e suas licenças/origens estão listadas em `vendor/DEPENDENCIES.md`. A licença das artes do projeto não foi presumida; o inventário registra que os arquivos foram fornecidos pelo idealizador e que não há licença de terceiros identificada.
+
+Não foram executados testes de navegador, testes automatizados nem análise CodeQL nesta revisão. A alteração foi revisada estaticamente; a aparência e o funcionamento em desktop, iPad, iPhone e instalação PWA ainda precisam de confirmação manual após a publicação.
+
 ## O que esta revisão não confirma
 
 Este pacote ainda não foi exercitado em navegadores e aparelhos físicos depois das mudanças do Educa Aí. Não houve teste de invasão independente, revisão jurídica, certificação ou validação institucional. O suporte da passkey deve ser confirmado no aparelho e navegador que a pessoa usará. Portanto, não se afirma que o site seja completamente seguro ou validado para uso em larga escala.

@@ -22,3 +22,7 @@ O DNS continua sendo necessário para qualquer navegador encontrar o domínio do
 As bibliotecas locais não se atualizam sozinhas. Antes de atualizar uma dependência, confira a versão e os avisos de segurança no projeto original, obtenha a distribuição de uma fonte oficial, atualize o aviso de licença e o hash, avalie o funcionamento e observe os resultados das análises do GitHub. Não troque o arquivo local por uma referência remota de CDN.
 
 As licenças deste inventário se aplicam às bibliotecas de terceiros identificadas, não à licença do restante do Educa Aí. O código próprio do aplicativo é distribuído sob a licença MIT indicada na raiz do repositório.
+
+## Logos e imagens do projeto
+
+Os arquivos de logo e o mascote usado nos ícones foram fornecidos pelo idealizador do Educa Aí. Não foi identificada uma licença de terceiros para essas imagens; a licença do código não deve ser interpretada como licença separada para reutilizar a arte ou a marca.

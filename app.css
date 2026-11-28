@@ -22,7 +22,7 @@ body[data-setup-flow="true"]{--green:#a90f2a;--mint:#ffe4e8;--line:#ecd0d5;--mut
 body[data-setup-flow="true"] .flow-gate{background:#fff8f8}
 body[data-setup-flow="true"] .flow-card h1,.privacy-card h1{color:#a90f2a}
 .brand-row{gap:10px}
-.brand-educai .brand-logo{width:142px;height:142px}
+
 .brand-link[data-product] .brand-logo{width:104px;height:104px}
 .educai-flow-logo,.educai-intro-logo{display:block;width:min(32vw,150px);height:min(32vw,150px);object-fit:contain;margin:0 auto 12px}
 .educai-intro-logo{width:min(42vw,190px);height:min(42vw,190px);margin-bottom:10px}
@@ -41,4 +41,6 @@ body[data-setup-flow="true"] .flow-card h1,.privacy-card h1{color:#a90f2a}
 .recovery-card #confirmRecoveryKey{width:100%}
 #passkeyStatus{flex:1 1 220px}
 .educai-flow-logo{margin:0 auto 12px}
-@media(max-width:650px){.brand-row{gap:2px}.brand-educai .brand-logo{width:30vw;height:30vw;max-width:112px;max-height:112px}.brand-link[data-product] .brand-logo{width:26vw;height:26vw;max-width:96px;max-height:96px}.mode-grid{grid-template-columns:1fr}.mode-card img{height:130px}.educai-intro-logo{width:150px;height:150px}}
+@media(max-width:650px){.brand-row{gap:2px}.brand-link[data-product] .brand-logo{width:26vw;height:26vw;max-width:96px;max-height:96px}.mode-grid{grid-template-columns:1fr}.mode-card img{height:130px}.educai-intro-logo{width:150px;height:150px}}
+
+.password-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.password-actions button{flex:1 1 170px}

@@ -24,6 +24,8 @@
     <p id="privacyDescription">Crie uma senha para criptografar os dados neste aparelho e os arquivos de backup.</p>
     <div id="profileNameWrap"><label for="profileNameInput">Usuário (nome pelo qual quer ser chamada)</label><input id="profileNameInput" type="text" autocomplete="nickname" maxlength="60" required placeholder="Ex.: Professora Ana"></div>
     <label id="privacyPasswordLabel" for="privacyPassword">Senha</label><input id="privacyPassword" type="password" autocomplete="current-password" required minlength="14" placeholder="Use pelo menos 14 caracteres">
+    <div id="passwordActions" class="password-actions hidden"><button id="suggestPasswordBtn" class="tab" type="button">Sugerir senha forte</button><button id="togglePasswordVisibility" class="tab" type="button" aria-pressed="false">Mostrar senhas</button></div>
+    <p id="passwordSuggestionHint" class="hint hidden" role="status" aria-live="polite"></p>
     <div id="confirmPasswordWrap"><label for="privacyPasswordConfirm">Confirme a senha</label><input id="privacyPasswordConfirm" type="password" autocomplete="new-password" minlength="14" placeholder="Digite a mesma senha novamente"></div>
     <p id="privacyError" class="error" role="alert"></p>
     <button id="privacySubmit" class="primary" type="submit">Criar perfil e proteger</button>
@@ -44,7 +46,7 @@
     <p id="secretError" class="error" role="alert"></p><div class="row"><button class="primary" type="submit">Abrir arquivo</button><button id="secretCancel" class="tab" type="button">Cancelar</button></div>
   </form>
 </section>
-<header><div class="brand-row"><button class="brand-link brand-educai" type="button" data-open-chooser="true" aria-label="Voltar à escolha das ferramentas Educa Aí"><img class="brand-logo" src="assets/logo-educai.webp" alt="Educa Aí"></button><button class="brand-link" type="button" data-product="vista" aria-label="Abrir Vista Aí"><img class="brand-logo" src="assets/logo-vistaai.webp" alt="Vista Aí"></button><button class="brand-link" type="button" data-product="anota" aria-label="Abrir Anota Aí"><img class="brand-logo" src="assets/logo-anotaai.webp" alt="Anota Aí"></button></div><p>Educa Aí • ferramentas para a rotina de professores</p></header>
+<header><div class="brand-row"><button class="brand-link" type="button" data-product="vista" aria-label="Abrir Vista Aí"><img class="brand-logo" src="assets/logo-vistaai.webp" alt="Vista Aí"></button><button class="brand-link" type="button" data-product="anota" aria-label="Abrir Anota Aí"><img class="brand-logo" src="assets/logo-anotaai.webp" alt="Anota Aí"></button></div><p>Educa Aí • ferramentas para a rotina de professores</p></header>
 <main class="wrap" inert>
   <div class="card no-print"><label for="activeDiscipline">Disciplina selecionada</label><div class="row"><select id="activeDiscipline" class="grow"><option value="">Nenhuma disciplina cadastrada</option></select><span class="hint">Turmas, alunos, vistos e QR Codes são separados por disciplina.</span></div></div>
   <div id="storageWarning" class="notice hidden no-print" role="status"></div>
@@ -127,5 +129,6 @@
 <script src="./vendor/qrcodejs-1.0.0.min.js" defer></script>
 <script src="./vendor/xlsx-0.20.3.full.min.js" defer></script>
 <script src="./security.js" defer></script>
+<script src="./password-tools.js" defer></script>
 <script src="./app.js" defer></script>
 </body></html>

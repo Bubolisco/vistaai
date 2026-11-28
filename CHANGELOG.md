@@ -7,7 +7,9 @@
 - Cria um cofre local criptografado com senha e chave aleatória de recuperação. A chave permite abrir o cofre e definir outra senha.
 - Mantém compatibilidade de leitura com cofres locais da versão anterior e os atualiza para o novo formato depois do desbloqueio.
 - Adiciona passkey opcional para desbloqueio rápido quando navegador, aparelho e gerenciador de credenciais oferecem WebAuthn com a extensão PRF. A senha e a chave de recuperação continuam como alternativas.
-- Atualiza as marcas, cores, ícones do navegador e ícones de instalação do Educa Aí.
+- Adiciona o botão “Sugerir senha forte” no cadastro e na redefinição de senha. A senha aleatória é criada localmente com o gerador criptográfico do navegador.
+- Simplifica o cabeçalho para mostrar apenas os mascotes do Vista Aí e do Anota Aí.
+- Atualiza favicon e ícones de instalação com o mascote do Educa Aí, sem o texto do logotipo.
 - Mantém o uso gratuito e a contribuição voluntária opcional.
 
 ### Base técnica incorporada à versão 1.7

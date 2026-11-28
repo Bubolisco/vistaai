@@ -30,7 +30,7 @@ O **Educa Aí** reúne atualmente duas ferramentas de navegador:
 
 ## Primeiro acesso e proteção
 
-Na primeira abertura, o Educa Aí apresenta o projeto e os modos de uso. Escolha **Uso individual**, crie um perfil local, informe uma senha de pelo menos 14 caracteres e guarde a chave de recuperação apresentada antes de concluir a criação do cofre. Depois, cadastre uma disciplina, conheça as ferramentas e escolha Vista Aí ou Anota Aí.
+Na primeira abertura, o Educa Aí apresenta o projeto e os modos de uso. Escolha **Uso individual**, crie um perfil local, informe uma senha de pelo menos 14 caracteres e guarde a chave de recuperação apresentada antes de concluir a criação do cofre. No cadastro ou na redefinição da senha, o botão **Sugerir senha forte** pode gerar uma senha aleatória de 24 caracteres no próprio navegador; confira-a e guarde-a em um gerenciador de senhas. Depois, cadastre uma disciplina, conheça as ferramentas e escolha Vista Aí ou Anota Aí.
 
 O perfil não é uma conta on-line; o nome informado é apenas um nome de exibição local. No Uso individual, os nomes, turmas e registros ficam no armazenamento deste navegador; não há sincronização com servidor. A senha protege o cofre. A chave de recuperação permite abrir o cofre e definir outra senha. Se baixar essa chave em arquivo, o arquivo fica sem criptografia e deve ser guardado com cuidado. Se perder a senha e a chave, os dados criptografados não poderão ser recuperados.
 
@@ -56,7 +56,7 @@ O leitor de QR, o gerador de QR e a biblioteca de planilhas são incluídos loca
 
 O aplicativo não usa um serviço de DNS de terceiros integrado ao código. Como qualquer site, o domínio ainda precisa de DNS para ser encontrado: essa resolução depende dos servidores DNS configurados para o domínio e da rede/aparelho de quem acessa. Os links para o Mercado Pago só são abertos quando a pessoa escolhe uma opção de apoio.
 
-O projeto aplica uma política de segurança de conteúdo no HTML. Isso não protege um aparelho comprometido, uma senha fraca ou uma cópia do site adulterada, nem substitui auditoria independente. Veja [SECURITY.md](SECURITY.md) e [SEGURANCA-E-PRIVACIDADE.md](SEGURANCA-E-PRIVACIDADE.md).
+O projeto aplica uma política de segurança de conteúdo no HTML. Isso não protege um aparelho comprometido, uma senha fraca ou uma cópia do site adulterada, nem substitui auditoria independente. Veja [AUDITORIA-DE-SEGURANCA.md](AUDITORIA-DE-SEGURANCA.md), [SECURITY.md](SECURITY.md) e [SEGURANCA-E-PRIVACIDADE.md](SEGURANCA-E-PRIVACIDADE.md).
 
 ## Contribuições
 
